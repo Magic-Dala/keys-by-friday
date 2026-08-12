@@ -1,59 +1,36 @@
-# Keys by Friday — MVP
+# Keys by Friday — AI Rental Search Agent
 
-A single Google ADK + Gemini rental agent for a bounded Silicon Valley search flow:
+Keys by Friday is a **single-agent rental decision MVP** for Silicon Valley. It turns natural-language rental requirements into a ranked, verified, explainable shortlist of real listings.
 
 ```text
-natural-language request
-→ Single Rental Agent
-→ ADK session requirement memory
-→ RealtyAPI Apartments or mock provider
-→ canonical listings
-→ deterministic hard filters + ranking
-→ detail-verify Top 3
-→ verified recommendations + tradeoffs
+Natural-language request
+→ Google ADK Single Rental Agent
+→ Gemini requirement parsing + tool calling
+→ RealtyAPI / Apartments.com listings
+→ Canonical normalization
+→ Deterministic hard filters + ranking
+→ Top-3 detail verification
+→ Verified recommendations + tradeoffs
 ```
 
-## Scope
+## Current Capabilities
 
-Supported cities: San Jose, Santa Clara, Sunnyvale, Mountain View, Palo Alto, Menlo Park, and Redwood City.
+- Real Silicon Valley rental search through RealtyAPI / Apartments.com
+- Supported cities: San Jose, Santa Clara, Sunnyvale, Mountain View, Palo Alto, Menlo Park, Redwood City
+- Deterministic budget / bedroom / bathroom / pet / parking constraints
+- Ranked Top 5 with clickable source URLs
+- Automatic detail verification for the Top 3
+- Verified availability, pet policy, parking policy, amenities, and other provider details when available
+- ADK Session State for follow-up refinements such as: `Change the budget to $3,500; keep everything else.`
+- Ordered Gemini fallback for quota / model availability failures
+- Mock provider for credential-free local development
 
-The agent still has exactly two tools:
+The Agent intentionally exposes only two product tools:
 
 - `search_listings()`
 - `get_listing_details()`
 
-Gemini handles natural-language understanding, follow-up refinements, soft preferences, tool selection, and explanations. Rent, bedrooms, bathrooms, pets, parking, normalization, hard filtering, and ranking stay deterministic.
-
-### Session memory and verification
-
-Within one ADK session, `search_listings()` stores the effective rental requirements in ADK session state. A follow-up can therefore change only one constraint while omitted constraints remain unchanged.
-
-Example:
-
-```text
-2B2B under $4,000 in Mountain View
-→ Change the budget to $3,500; keep everything else.
-```
-
-The second search keeps Mountain View and 2B2B while changing only the budget. `reset_search=True` is reserved for an explicit start-over request.
-
-After each initial or refined search, the agent detail-verifies only the Top 3 candidates with `get_listing_details()`. Detail verification enriches the recommendation with evidence such as availability, pet policy, parking policy, amenities, and year built when the provider supplies it. Ranks 4-5 remain clearly marked as not detail-verified unless the user asks about one specifically.
-
-## Gemini model fallback
-
-The single Agent tries Gemini models in this order by default:
-
-```text
-gemini-3.5-flash-lite
-→ gemini-3.1-flash-lite
-→ gemini-3.6-flash
-→ gemini-3.5-flash
-→ gemini-2.5-flash
-```
-
-Override the order with `GEMINI_MODELS`, using a comma-separated list. Fallback only occurs for quota/rate-limit, missing-model, timeout, or server-side model failures (HTTP 404/408/429/5xx). Prompt/schema/auth errors are surfaced instead of silently switching models.
-
-## Setup
+## Quick Start
 
 Requires Python 3.11+ and `uv`.
 
@@ -61,46 +38,67 @@ Requires Python 3.11+ and `uv`.
 uv sync --extra dev
 ```
 
-Mock mode needs no listing-provider key:
+### Mock mode
+
+No listing-provider credential is required:
 
 ```env
 LISTING_PROVIDER=mock
 ```
 
-For the real provider, create a RealtyAPI key and run:
+### Real listing mode
+
+Create a RealtyAPI key, then run:
 
 ```powershell
 .\scripts\setup_keys.ps1
 ```
 
-The script preserves an existing Google/Gemini key, securely prompts for the RealtyAPI key, writes the default model fallback order, and writes only to the git-ignored `.env` file.
+This writes credentials only to the git-ignored `.env` file.
 
 Start the Google ADK developer UI:
 
 ```powershell
-uv run adk web . --no-reload
+uv run adk web . --no-reload --port 8765
 ```
 
-Or run one ADK CLI query:
+Or run a CLI query:
 
 ```powershell
 uv run adk run rental_agent "2B2B under $4,000 in Mountain View"
 ```
 
-## Real listing mode
+Then refine it in the same ADK session, for example:
 
-```env
-LISTING_PROVIDER=realtyapi
-REALTYAPI_API_KEY=your_key
-GOOGLE_API_KEY=your_gemini_key
-GEMINI_MODELS=gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,gemini-3.5-flash,gemini-2.5-flash
+```text
+Change the budget to $3,500, keep everything else.
 ```
 
-The MVP uses RealtyAPI's Apartments search endpoint. Provider-side filters narrow rent, beds, integer bathroom bounds, generic pet-friendly, and parking requirements before the canonical deterministic filter runs again locally.
+## Architecture at a Glance
 
-The current boolean `pets_required` model is intentionally conservative: generic pet-friendly requests use the provider's `Dog_and_Cat` filter until the product models pet species explicitly.
+```text
+User
+ ↓
+Google ADK
+ ↓
+Single Rental Agent
+ ├─ Gemini: language understanding, tool choice, soft preferences, explanation
+ └─ Python: provider access, normalization, hard filtering, ranking, verification
+        ↓
+RealtyAPI / Apartments.com
+```
 
-If `LISTING_PROVIDER=realtyapi` is requested without `REALTYAPI_API_KEY`, startup fails immediately with a clear credential error.
+Hard facts remain deterministic; Gemini must not override the filter/ranking boundary or invent unavailable listing data.
+
+## Documentation
+
+GitHub Markdown is the **authoritative technical source of truth**. Notion is the human-friendly project overview / dashboard and should link back to these docs instead of duplicating all implementation details.
+
+- [Architecture](docs/architecture.md) — ADK Single Agent, responsibility boundaries, Gemini fallback
+- [Listing Pipeline](docs/listing-pipeline.md) — RealtyAPI, canonical model, hard filters, ranking, Top-3 verification
+- [Session and UX](docs/session-and-ux.md) — ADK Session State, refinement behavior, output contract, E2E flow
+- [Status](docs/status.md) — completed capabilities, tests, real E2E evidence
+- [Roadmap](docs/roadmap.md) — Comparison, Shortlist, Commute Intelligence
 
 ## Tests
 
@@ -108,4 +106,12 @@ If `LISTING_PROVIDER=realtyapi` is requested without `REALTYAPI_API_KEY`, startu
 uv run pytest -q
 ```
 
-The focused suite verifies deterministic filtering/ranking, mock operation without external keys, RealtyAPI request/auth construction and detail normalization, ADK session requirement memory, Top-3 verification merging, ordered Gemini fallback behavior, the two-tool single-agent surface, and the real-mode credential boundary.
+The current focused suite covers deterministic filtering/ranking, RealtyAPI request and detail normalization, ADK session requirement memory, Top-3 verification merging, Gemini fallback, mock mode, and credential boundaries.
+
+## Scope Boundary
+
+Current development focuses on:
+
+> **Find → Verify → Understand → Rank → Decide**
+
+Not current blockers: nationwide coverage, Zillow scraping, full MLS integration, multi-agent orchestration, crime/school scoring, continuous monitoring, landlord outreach, viewing automation, or a large custom frontend.
