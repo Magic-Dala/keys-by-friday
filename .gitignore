@@ -45,3 +45,6 @@ uploads/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ADK local runtime state
+.adk/
