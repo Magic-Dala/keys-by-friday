@@ -1,20 +1,42 @@
 # Roadmap
 
+> **Document type: Living Document**  
+> This file is expected to change as priorities move. Stable architecture and API rules belong in the Stable Reference documents.
+
 ## Product Direction
 
-The MVP already proves the basic rental-search loop:
+The target product loop is:
 
-> **Find → Verify → Understand → Rank**
+> **Find → Verify → Understand → Rank → Decide**
 
-The next phase should turn that into a stronger rental **decision** workflow without prematurely expanding into multi-agent orchestration or a large frontend.
-
-Priority order:
+Current Hackathon priority order:
 
 ```text
-P3 Comparison Mode
-→ P4 Shortlist
-→ P5 Commute Intelligence
+Phase 1  Web integration                 ✅ Baseline complete
+Phase 2  Structured API listings[]       ✅ Baseline complete
+Phase 3  Frontend rental-result UX       🔄 Foundation complete; product polish next
+Phase 4  Commute / Maps evidence         ⬜ Planned
+Phase 5  Comparison + Shortlist          ⬜ Planned
+Phase 6  Demo polish + deployment        ⬜ Planned
 ```
+
+The immediate goal is to strengthen the existing vertical slice, not add orchestration frameworks.
+
+## Phase 2 — Structured API Results
+
+Normalize source-backed Agent search / verification state into the `/api/chat` `listings[]` response so the frontend can render rental cards without parsing arbitrary prose.
+
+## Phase 3 — Frontend Rental UX
+
+Build listing cards, source links, recommendation / tradeoff presentation, loading and error states, and follow-up conversation on the stable `/api/chat` contract.
+
+## Phase 6 — Demo Polish and Deployment
+
+Before submission, establish a repeatable deployment path, responsive UI, representative demo scenarios, and final end-to-end verification.
+
+## Later Decision Features
+
+The detailed Comparison, Shortlist, and Commute sections below remain candidate product features after the integration and structured-result path is solid.
 
 ## P3 — Comparison Mode
 

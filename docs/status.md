@@ -1,120 +1,106 @@
 # Project Status
 
+> **Document type: Living Document**  
+> This file is expected to change as implementation progresses. Update it when a capability becomes working, blocked, replaced, or verified. Do not copy stable architecture or API rules here.
+
 ## Current Stage
 
-**Runnable Silicon Valley Rental Agent MVP**
+**Project baseline established: the web integration, shared API contract, structured listing flow, and Google ADK Agent path are all runnable together.**
 
-Current development branch:
+Current end-to-end shape:
 
 ```text
-feat/rental-agent-mvp
+Next.js Frontend
+→ POST /api/chat
+→ FastAPI Backend
+→ AgentService
+→ Google ADK Rental Agent
+→ RealtyAPI / Apartments.com
+→ Agent response
 ```
 
-This document tracks the current implementation state. Git history remains the authoritative record for individual commits; commit hashes are intentionally not hard-coded here because they become stale immediately.
+## Working Now
 
-## Completed Capabilities
+### Web Integration
 
-### Agent / AI
+- ✅ Next.js frontend skeleton
+- ✅ FastAPI backend
+- ✅ `GET /health`
+- ✅ `POST /api/chat`
+- ✅ Frontend → backend HTTP integration
+- ✅ Backend → Google ADK adapter
+- ✅ `conversationId` mapped to ADK session continuity
+- ✅ Explicit `AGENT_MODE=stub` for contract testing
+- ✅ Real ADK mode is the normal path
+- ✅ Structured `listings[]` normalized from ADK tool responses
+- ✅ Basic frontend listing cards consume the shared contract
+
+### Agent / Rental Decision Flow
 
 - ✅ Google ADK Single Rental Agent
-- ✅ Exactly two product tools: `search_listings()` and `get_listing_details()`
+- ✅ `search_listings()`
+- ✅ `get_listing_details()`
 - ✅ Gemini natural-language requirement parsing
-- ✅ Follow-up refinement through ADK Session State
-- ✅ Ordered Gemini model fallback
-- ✅ Narrow fallback behavior for quota / model / service failures
-- ✅ Structured recommendation and tradeoff output
-
-### Listing Data / Decision Pipeline
-
-- ✅ `ListingProvider` abstraction
-- ✅ RealtyAPI / Apartments.com real-data provider
-- ✅ Mock provider for local / test mode
-- ✅ Canonical listing normalization
-- ✅ Exact supported-city filtering
-- ✅ Deterministic budget / bed / bath / pet / parking constraints
-- ✅ Deterministic ranking
-- ✅ Clickable Apartments.com source URLs
+- ✅ ADK Session State for follow-up refinement
+- ✅ RealtyAPI / Apartments.com real listing search
+- ✅ Canonical normalization
+- ✅ Deterministic hard filtering and ranking
 - ✅ Top-3 detail verification
-- ✅ Search/detail evidence merge and hard-filter revalidation
-- ✅ Availability / pet / parking / amenities enrichment when supplied by provider
+- ✅ Search/detail merge and hard-filter revalidation
+- ✅ Source-backed final recommendation text
 
-### Developer Experience
+### Development Foundation
 
-- ✅ `uv`-based environment
-- ✅ `.env.example`
-- ✅ Git-ignored local credentials
-- ✅ PowerShell credential setup script
-- ✅ ADK Web local developer UI
-- ✅ CLI query path
-- ✅ ADK local runtime data ignored from Git
+- ✅ `frontend/**`, `backend/**`, and `rental_agent/**` ownership boundaries
+- ✅ Shared API contract
+- ✅ Centralized backend environment settings
+- ✅ Request validation and stable Agent failure boundary
+- ✅ Verified hard-filter failures excluded from structured web results
+- ✅ Frontend runtime validation for backend responses
+- ✅ Small server/client component boundary for the Next.js App Router
+- ✅ `uv` Python environment
+- ✅ npm / Next.js frontend environment
+- ✅ `.env` secrets ignored by Git
+- ✅ Stable-reference documentation structure
 
-## Validation Status
+## In Progress / Next Product Work
 
-Latest focused suite at this MVP stage:
+- 🔄 Improve frontend rental-result UX beyond the basic listing cards
+- 🔄 Add deterministic commute / Maps evidence when prioritized
+- 🔄 Comparison and shortlist workflows remain later product work
 
-```text
-17 tests passed
-Python compile PASS
-```
+The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 
-Real integration paths have also been exercised successfully:
+## Latest Verified Evidence
 
-- ✅ Natural language → Gemini → ADK tool calling
-- ✅ RealtyAPI real listing search
-- ✅ Canonical normalization + deterministic filter/rank
-- ✅ Apartments.com source URLs in final output
-- ✅ `search_listings → get_listing_details × Top 3 → final recommendation`
-- ✅ Top-3 detail calls issued in parallel by the Agent
-- ✅ Real two-turn ADK session requirement memory
-- ✅ Second-turn partial update preserving prior city / 2B2B requirements
-- ✅ Primary Gemini Flash-Lite model successfully performing function calling
+As of the current integration work:
 
-## Current Real E2E Shape
+- ✅ Backend API tests: 7 passed
+- ✅ Existing Agent tests: 17 passed
+- ✅ Next.js production build passed
+- ✅ TypeScript typecheck passed
+- ✅ Frontend page rendered locally
+- ✅ Backend health endpoint responded successfully
+- ✅ Real `/api/chat` request reached Google ADK and returned real Mountain View rental matches
+- ✅ Real `/api/chat` response returned 4 structured listings with normalized price / beds / baths / source URL / reason
+- ✅ Real follow-up request reused the same `conversationId` and preserved the ADK session
+- ✅ Empty requests return 422 and Agent-layer failures are mapped to a stable 502 response
+- ✅ Frontend TypeScript typecheck passed after listing-card integration
+- ✅ Removed `/api/search` returns 404; `/api/chat` is the single primary web endpoint
 
-```text
-User request
-↓
-Gemini
-↓
-search_listings()
-↓
-RealtyAPI search
-↓
-normalize / filter / rank
-↓
-Top 5
-↓
-parallel detail verification for Top 3
-↓
-verified recommendations + other matches
-```
-
-A validated refinement flow also looks like:
-
-```text
-Turn 1:
-2B2B under $4,000 in Mountain View
-
-Turn 2:
-Change the budget to $3,500, keep everything else.
-
-Resulting effective constraints:
-Mountain View + 2B2B + $3,500 max
-```
+Exact commit hashes and branch names are intentionally not recorded here; Git is the source of truth for those details.
 
 ## Known MVP Boundaries
 
-- Supported geography is currently limited to the configured Silicon Valley cities.
-- RealtyAPI search rows can represent property/community ranges rather than exact individual units; the normalizer uses conservative deterministic handling.
-- Some provider fields remain unavailable for some listings and must stay unknown.
-- The current ADK Web UI is a development interface, not a final consumer frontend.
-- Soft preferences such as quiet / safe / modern are not yet backed by dedicated enrichment data.
-- Commute time is not yet computed; it must not be guessed by Gemini.
-- No persistent shortlist / comparison workflow exists yet.
-- No background monitoring or landlord outreach exists yet.
+- Geography is currently focused on configured Silicon Valley cities.
+- Some provider fields are unavailable for some listings and must remain unknown.
+- Soft preferences such as quiet / safe / modern do not yet have dedicated enrichment evidence.
+- Commute time is not yet computed and must not be guessed by Gemini.
+- Persistent shortlist / comparison workflows are not complete.
+- Background monitoring and landlord outreach are outside the current MVP.
 
-## Documentation Policy
+## Update Rule
 
-GitHub code and Markdown docs are the authoritative technical source of truth.
+This file **should** change when implementation status changes.
 
-Notion is the human-friendly project overview / dashboard and should summarize current state and link to GitHub docs. Implementation changes should update the relevant Markdown file in the same PR whenever the documented contract changes.
+Do not use it to redefine architecture, API contracts, or Agent behavioral rules. Those belong in the Stable Reference documents linked from the README.

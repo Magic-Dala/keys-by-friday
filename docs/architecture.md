@@ -1,120 +1,62 @@
 # Architecture
 
-## Design Goal
+> **Stable Reference — change only for an intentional architecture decision.**
 
-Keys by Friday uses **one Google ADK Rental Agent**, not a multi-agent graph. The Agent owns conversational orchestration while deterministic Python code owns listing facts and decision boundaries.
-
-```text
-User
- ↓
-Google ADK session/runtime
- ↓
-Single Rental Agent
- ├─ Ordered Gemini model
- ├─ search_listings()
- └─ get_listing_details()
-        ↓
-Provider abstraction
-        ↓
-RealtyAPI / Apartments.com or Mock
-```
-
-## Why Single Agent
-
-The current product flow is bounded and sequential: understand the request, search, verify, explain. Separate agents would add orchestration overhead without creating a distinct authority boundary.
-
-The implementation therefore keeps exactly two product tools:
-
-- `search_listings()`
-- `get_listing_details()`
-
-Search, normalization, ranking, verification, and provider access remain implementation modules behind those tools rather than separate agents.
-
-## Responsibility Boundary
-
-### Gemini owns
-
-- Natural-language requirement extraction
-- Understanding follow-up refinements
-- Soft-preference interpretation
-- Tool selection and tool-call arguments
-- User-facing recommendation and tradeoff explanations
-
-### Deterministic Python owns
-
-- Listing-provider access
-- Canonical normalization
-- City matching
-- Rent / budget checks
-- Bedroom / bathroom bounds
-- Pet / parking hard requirements
-- Deterministic ranking
-- Top candidate selection
-- Detail merge and hard-filter revalidation
-
-Gemini must not re-add a listing rejected by deterministic filters or invent missing listing facts.
-
-## ADK Session State
-
-The Agent uses ADK session state rather than a custom memory service. Effective rental requirements and recent candidate/verification state are stored in the current session so a follow-up can update only the fields that changed.
-
-Example:
+## Baseline
 
 ```text
-Turn 1: 2B2B under $4,000 in Mountain View
-Turn 2: Change the budget to $3,500, keep everything else.
+Browser
+→ Next.js Frontend
+→ POST /api/chat
+→ FastAPI Backend
+→ AgentService
+→ Google ADK Rental Agent
+→ Rental Provider
 ```
 
-The second tool call may contain only `max_rent=3500`; the tool merges it with the persisted session requirements.
+## Responsibilities
 
-See [Session and UX](session-and-ux.md) for the behavioral contract.
+### Frontend
 
-## Gemini Model Fallback
+- collect user input
+- keep `conversationId`
+- display Agent responses and structured listings
+- depend only on the HTTP API
 
-The Agent uses an ordered model wrapper instead of binding the runtime to one quota pool.
+### Backend
 
-Default order:
+- expose the web API
+- validate requests and responses
+- map the web contract to the ADK runtime
+- normalize Agent output for the frontend
 
-```text
-gemini-3.5-flash-lite
-→ gemini-3.1-flash-lite
-→ gemini-3.6-flash
-→ gemini-3.5-flash
-→ gemini-2.5-flash
-```
+The backend is an adapter, not a second rental-decision engine.
 
-Override with:
+### Agent
 
-```env
-GEMINI_MODELS=model-a,model-b,model-c
-```
+- understand rental requirements
+- manage conversational search behavior
+- call rental tools
+- use deterministic filtering / ranking boundaries
+- explain verified results and tradeoffs
 
-Fallback is intentionally narrow. The next model is tried for model-layer availability failures such as:
+### Provider
 
-- HTTP 404 — configured model unavailable
-- HTTP 408 — request timeout
-- HTTP 429 — quota / rate limit
-- HTTP 5xx — model service failure
-- transport / timeout failures classified as retryable by the wrapper
+- supply rental listing and detail data
+- remain behind the Agent/provider abstraction
 
-The Agent does **not** hide prompt/schema/authentication/application errors by cycling through every model. HTTP 400/401/403 and ordinary tool/provider failures are surfaced instead.
+## Architecture Invariants
 
-## Provider Boundary
+- Frontend does not import Google ADK or Python modules.
+- Backend does not duplicate Agent search, ranking, or provider logic.
+- Agent does not depend on Next.js or frontend-specific UI types.
+- Provider-specific details should not leak through every layer.
+- Add a new framework or service only when it creates a real capability or authority boundary.
 
-Listing access is abstracted by `ListingProvider`:
+## Not Part of the Baseline
 
-```text
-ListingProvider
-├─ search(requirements)
-├─ get_listing(listing_id)
-├─ get_changes(...)
-└─ health()
-```
+The project does not require n8n, LangChain, multi-agent orchestration, or a second backend path for the current MVP.
 
-The active real provider is RealtyAPI / Apartments.com. A mock provider keeps local development and tests independent of external credentials.
+## Change Rule
 
-The provider abstraction is intentionally more stable than any one marketplace integration. Future data sources should normalize into the same canonical model rather than leaking provider-specific fields into the Agent contract.
-
-## Technical Source of Truth
-
-GitHub code and Markdown docs are authoritative for implementation behavior. Notion is the team-facing project overview and should summarize or link to these documents instead of maintaining a second copy of detailed technical contracts.
+Do not edit this file for feature implementation details. Update it only when one of the system boundaries above intentionally changes.
