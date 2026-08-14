@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from itertools import zip_longest
-import re
 import time
 from typing import Any, Callable, Iterable, TypeVar
 
@@ -412,38 +411,6 @@ def normalize_realtor_listing(
     )
 
 
-def _street_key(listing: Listing) -> str:
-    street = listing.address.split(",", 1)[0].strip().casefold()
-    replacements = {
-        "street": "st",
-        "avenue": "ave",
-        "road": "rd",
-        "drive": "dr",
-        "boulevard": "blvd",
-        "lane": "ln",
-        "court": "ct",
-        "highway": "hwy",
-    }
-    tokens = re.findall(r"[a-z0-9#]+", street)
-    return " ".join(replacements.get(token, token) for token in tokens)
-
-
-def _dedupe_fingerprint(listing: Listing) -> tuple[object, ...] | None:
-    street = _street_key(listing)
-    if not street or not listing.city or not listing.state:
-        return None
-    if listing.bedrooms is None or listing.bathrooms is None or listing.rent is None:
-        return None
-    return (
-        street,
-        listing.city.casefold().strip(),
-        listing.state.upper().strip(),
-        round(float(listing.bedrooms), 2),
-        round(float(listing.bathrooms), 2),
-        round(float(listing.rent), 2),
-    )
-
-
 def _interleave(groups: Iterable[list[Listing]]) -> Iterable[Listing]:
     for row in zip_longest(*groups):
         for listing in row:
@@ -596,19 +563,9 @@ class RealtyApiMultiProvider(ListingProvider):
             )
             raise RuntimeError(f"All RealtyAPI sources failed ({summary})")
 
-        merged: list[Listing] = []
-        seen: dict[tuple[object, ...], set[str]] = {}
-        for listing in _interleave(results):
-            fingerprint = _dedupe_fingerprint(listing)
-            if fingerprint is not None:
-                prior_sources = seen.get(fingerprint, set())
-                if prior_sources and listing.source not in prior_sources:
-                    continue
-                seen.setdefault(fingerprint, set()).add(listing.source)
-            merged.append(listing)
-            if len(merged) >= max(1, requirements.limit):
-                break
-        return merged
+        # Preserve source-specific postings. The agent groups the same physical
+        # property across Zillow/Realtor/Apartments so source evidence is not lost.
+        return list(_interleave(results))
 
     def get_listing(self, listing_id: str) -> Listing:
         if listing_id.startswith("zillow:"):

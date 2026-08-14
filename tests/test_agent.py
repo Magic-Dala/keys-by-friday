@@ -17,10 +17,11 @@ def test_agent_has_only_two_listing_tools():
 def test_agent_output_contract_requires_links_and_markdown():
     instruction = str(root_agent.instruction)
     assert "[ADDRESS](SOURCE_URL)" in instruction
-    assert "**Why it fits:**" in instruction
-    assert "**Tradeoffs:**" in instruction
+    assert "property_groups" in instruction
+    assert "every source posting" in instruction
+    assert "## Matching properties" in instruction
     assert "Do not show raw scores" in instruction
-    assert "top_10" in instruction
+    assert "property_groups" in instruction
     assert "Do NOT automatically call get_listing_details" in instruction
 
 
@@ -44,7 +45,7 @@ def test_mock_tool_path_works_without_external_keys(monkeypatch):
     assert result["soft_preferences_unverified"] == ["quiet", "near transit"]
 
 
-def test_search_returns_up_to_ten_candidates_and_keeps_top5_alias(monkeypatch):
+def test_search_returns_all_properties_and_keeps_top_aliases(monkeypatch):
     class TwelveListingProvider:
         def search(self, requirements):
             return [
@@ -80,13 +81,63 @@ def test_search_returns_up_to_ten_candidates_and_keeps_top5_alias(monkeypatch):
     )
 
     assert result["provider"] == "twelve-listings"
-    assert result["matched_count"] == 10
+    assert result["matched_count"] == 12
+    assert result["posting_count"] == 12
+    assert len(result["property_groups"]) == 12
     assert len(result["top_10"]) == 10
     assert len(result["top_5"]) == 5
     assert result["top_5"] == result["top_10"][:5]
-    assert [item["listing"]["id"] for item in result["top_10"]] == [
-        f"candidate-{index:02d}" for index in range(10)
+    assert [item["representative"]["listing"]["id"] for item in result["property_groups"]] == [
+        f"candidate-{index:02d}" for index in range(12)
     ]
+
+
+def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_separate(monkeypatch):
+    class MultiPostProvider:
+        def search(self, requirements):
+            def listing(identifier, address, source, rent=3800):
+                return Listing(
+                    id=identifier,
+                    address=address,
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code="94041",
+                    rent=rent,
+                    bedrooms=2,
+                    bathrooms=2,
+                    property_type="Apartment",
+                    status="active",
+                    source=source,
+                    source_url=f"https://example.test/{identifier}",
+                )
+            return [
+                listing("apt-main", "100 Castro Street, Mountain View, CA 94041", "realtyapi-apartments"),
+                listing("z-main", "100 Castro St", "realtyapi-zillow"),
+                listing("r-main", "100 Castro St", "realtyapi-realtor"),
+                listing("apt-unit2", "100 Castro St Apt 2, Mountain View, CA 94041", "realtyapi-apartments", 3900),
+                listing("z-unit2", "100 Castro St #2", "realtyapi-zillow", 3900),
+            ]
+
+        def get_listing(self, listing_id):
+            raise AssertionError("detail lookup should not be needed for broad search")
+
+        def health(self):
+            return {"ok": True, "provider": "multi-post"}
+
+    monkeypatch.setattr(agent_module, "get_provider", lambda: MultiPostProvider())
+    result = search_listings(city="Mountain View", max_rent=4000, min_bedrooms=2)
+
+    assert result["posting_count"] == 5
+    assert result["matched_count"] == 2
+    groups = result["property_groups"]
+    assert {item["listing"]["id"] for item in groups[0]["postings"]} == {
+        "apt-main", "z-main", "r-main"
+    }
+    assert groups[0]["source_count"] == 3
+    assert {item["listing"]["id"] for item in groups[1]["postings"]} == {
+        "apt-unit2", "z-unit2"
+    }
+    assert groups[1]["source_count"] == 2
 
 
 def test_real_mode_without_realtyapi_key_fails_clearly(monkeypatch):

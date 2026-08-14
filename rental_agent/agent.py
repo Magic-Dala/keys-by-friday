@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 import os
+import re
 from typing import Any, Optional
 
 from dotenv import load_dotenv
@@ -162,6 +163,69 @@ def _merge_listing_detail(search_listing: Listing | None, detail: Listing) -> Li
     return _listing_from_dict(merged)
 
 
+def _property_group_key(listing: Listing) -> tuple[str, str, str]:
+    """Conservative property identity for cross-source grouping.
+
+    Keep unit identifiers in the key so Apt 2 and Apt 3 never collapse together,
+    while normalizing common address/source formatting differences.
+    """
+    street = listing.address.split(",", 1)[0].strip().casefold()
+    street = re.sub(
+        r"\b(?:apartment|apt|unit)\s*#?\s*([a-z0-9-]+)\b",
+        r" #\1",
+        street,
+    )
+    street = re.sub(r"#\s+([a-z0-9-]+)", r"#\1", street)
+    replacements = {
+        "street": "st",
+        "avenue": "ave",
+        "road": "rd",
+        "drive": "dr",
+        "boulevard": "blvd",
+        "lane": "ln",
+        "court": "ct",
+        "highway": "hwy",
+    }
+    tokens = re.findall(r"[a-z0-9#-]+", street)
+    normalized_street = " ".join(replacements.get(token, token) for token in tokens)
+    if not normalized_street:
+        normalized_street = f"listing:{listing.source}:{listing.id}"
+    return (
+        normalized_street,
+        listing.city.casefold().strip(),
+        listing.state.upper().strip(),
+    )
+
+
+def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
+    groups: dict[tuple[str, str, str], dict[str, object]] = {}
+    order: list[tuple[str, str, str]] = []
+    for item in ranked:
+        listing = item.listing
+        key = _property_group_key(listing)
+        if key not in groups:
+            groups[key] = {
+                "representative": item.to_dict(),
+                "postings": [],
+                "sources": [],
+            }
+            order.append(key)
+        group = groups[key]
+        postings = group["postings"]
+        sources = group["sources"]
+        postings.append(item.to_dict())
+        if listing.source not in sources:
+            sources.append(listing.source)
+
+    result: list[dict[str, object]] = []
+    for rank, key in enumerate(order, start=1):
+        group = groups[key]
+        group["rank"] = rank
+        group["source_count"] = len(group["sources"])
+        result.append(group)
+    return result
+
+
 def search_listings(
     city: str = "",
     state: str = "",
@@ -180,9 +244,8 @@ def search_listings(
 
     On a follow-up search, pass only requirements the user changed. Omitted values
     inherit from the previous search in the same session. Set reset_search=True
-    only when the user explicitly wants to start over. The returned
-    verification_candidates must be checked with get_listing_details before the
-    final recommendation.
+    only when the user explicitly wants to start over. Broad searches return all
+    matching property_groups; detail verification is on demand.
     """
     previous = None
     if tool_context is not None:
@@ -207,15 +270,17 @@ def search_listings(
 
     provider = get_provider()
     normalized = provider.search(req)
-    ranked = filter_and_rank(normalized, req, top_n=10)
+    ranked = filter_and_rank(normalized, req, top_n=max(1, len(normalized)))
     ranked_payload = [item.to_dict() for item in ranked]
+    property_groups = _group_ranked_properties(ranked)
+    representative_payload = [group["representative"] for group in property_groups]
     verification_candidates = [
         {
             "rank": index + 1,
-            "listing_id": item.listing.id,
-            "address": item.listing.address,
+            "listing_id": item["listing"]["id"],
+            "address": item["listing"]["address"],
         }
-        for index, item in enumerate(ranked[:3])
+        for index, item in enumerate(representative_payload[:3])
     ]
 
     if tool_context is not None:
@@ -225,17 +290,19 @@ def search_listings(
 
     return {
         "provider": provider.health()["provider"],
-        "matched_count": len(ranked),
-        "top_10": ranked_payload,
-        "top_5": ranked_payload[:5],
+        "matched_count": len(property_groups),
+        "posting_count": len(ranked),
+        "property_groups": property_groups,
+        "top_10": representative_payload[:10],
+        "top_5": representative_payload[:5],
         "soft_preferences_unverified": list(req.soft_preferences),
         "effective_requirements": _requirements_to_dict(req),
         "memory_used": previous is not None and not reset_search,
         "verification_candidates": verification_candidates,
         "verification_policy": (
-            "Verify exactly these top candidates with get_listing_details before "
-            "giving the final recommendation. Do not verify lower-ranked results "
-            "unless the user asks about one specifically."
+            "Do not automatically verify broad search results. Use "
+            "get_listing_details only when the user asks about a specific "
+            "property/source posting or narrows the candidate set."
         ),
     }
 
@@ -322,33 +389,34 @@ Memory and search behavior:
 
 Candidate-first behavior:
 5. For every initial or refined search, call search_listings exactly once.
-6. Do NOT automatically call get_listing_details after a broad search. First show
-   up to ten entries from top_10 so the user can review the candidate pool and
-   refine it conversationally.
-7. Keep broad-search results compact. For each candidate show rank, linked address,
-   rent, beds, baths when known, property type when known, and source. Unknown
-   fields must stay unknown; never invent them.
-8. Do not force source diversity in the displayed ten. Deterministic ranking decides
-   order; the multi-source provider supplies the candidate pool.
-9. When the user adds or changes requirements, call search_listings again with only
-   the changed fields and present the newly filtered/ranked top ten.
-10. Use get_listing_details only when the user asks about a specific listing, asks
-    to compare a small subset, or has narrowed the results enough that verification
-    is useful. Never verify all ten automatically.
-11. A verified candidate with passes_current_hard_filters=false must not be
-    presented as satisfying the current hard constraints.
+6. Do NOT automatically call get_listing_details after a broad search.
+7. Broad searches must show every entry in property_groups, not only top_10.
+   Each property group represents the same physical address/unit across sources.
+8. For each property group, show the property once, then list every source posting
+   underneath it. Preserve source-specific rent, beds, baths, URL, and source name.
+   If sources disagree, show their values separately rather than inventing a merged fact.
+9. Never collapse different unit numbers in the same building. A group may contain
+   Zillow, Realtor.com, Apartments.com, or any subset that actually returned it.
+10. When the user adds or changes requirements, call search_listings again with only
+    the changed fields and show all newly matching property_groups.
+11. Use get_listing_details only when the user asks about a specific property/source
+    posting, asks to compare a small subset, or has narrowed results enough that
+    verification is useful. Never verify the whole candidate set automatically.
+12. A verified candidate with passes_current_hard_filters=false must not be presented
+    as satisfying the current hard constraints.
 
 Answer format:
-12. Start with one concise sentence summarizing the effective search. On a follow-up,
-    briefly state which previous constraints were kept and what changed.
-13. For a broad search/refinement, use `## Candidates` and list up to ten results.
-    Use Markdown links in the literal form `[ADDRESS](SOURCE_URL)`. Keep each item
-    concise: rank, linked address, rent, beds, baths if known, property type if
-    known, and source.
-14. Do not show raw scores or internal scores.
-15. For a specific verified listing or small comparison, you may use `**Why it fits:**`
-    and `**Tradeoffs:**`, but clearly distinguish verified facts from unknown fields.
-16. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
+13. Start with one concise sentence summarizing the effective search and report both
+    unique property count (matched_count) and total posting count (posting_count).
+14. Use `## Matching properties` and list every property_group. For each group:
+    `### N. Address`
+    Then one bullet per posting using a Markdown link in the literal form `[ADDRESS](SOURCE_URL)` and source-specific facts, e.g.
+    `- [Zillow]($URL) — $3,200/mo · 2 bed · bath unknown`
+    `- [Apartments.com]($URL) — $3,300/mo · 2 bed · 2 bath`
+15. If a group has only one posting, still show its single source bullet.
+16. Do not show raw scores or internal scores.
+17. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
+
 """.strip(),
     tools=[search_listings, get_listing_details],
 )

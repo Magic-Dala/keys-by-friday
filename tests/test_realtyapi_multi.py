@@ -254,7 +254,7 @@ def test_get_listing_routes_ids_to_correct_detail_endpoint():
     assert realtor.detail_verified is True
 
 
-def test_cross_source_dedupe_collapses_obvious_duplicate_but_keeps_other_unit():
+def test_cross_source_postings_are_preserved_for_agent_grouping():
     def apartments_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -288,9 +288,9 @@ def test_cross_source_dedupe_collapses_obvious_duplicate_but_keeps_other_unit():
 
     ids = {listing.id for listing in results}
     assert "apt-same" in ids
-    assert "zillow:z-same" not in ids
+    assert "zillow:z-same" in ids
     assert "apt-unit-2" in ids
-    assert len(results) == 2
+    assert len(results) == 3
 
 
 def test_interleaving_prevents_first_source_from_consuming_limit():
@@ -316,11 +316,15 @@ def test_interleaving_prevents_first_source_from_consuming_limit():
         SearchRequirements(city="Mountain View", state="CA", limit=3)
     )
 
-    assert [listing.source for listing in results] == [
+    assert [listing.source for listing in results[:3]] == [
         "realtyapi-apartments",
         "realtyapi-zillow",
         "realtyapi-realtor",
     ]
+    assert len(results) == 12
+    assert sum(item.source == "realtyapi-apartments" for item in results) == 10
+    assert sum(item.source == "realtyapi-zillow" for item in results) == 1
+    assert sum(item.source == "realtyapi-realtor" for item in results) == 1
 
 
 def test_realtor_full_state_name_normalizes_for_hard_filters():
