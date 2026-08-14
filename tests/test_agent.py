@@ -16,12 +16,11 @@ def test_agent_has_only_two_listing_tools():
 
 def test_agent_output_contract_requires_links_and_markdown():
     instruction = str(root_agent.instruction)
-    assert "[ADDRESS](SOURCE_URL)" in instruction
-    assert "property_groups" in instruction
-    assert "every source posting" in instruction
-    assert "## Matching properties" in instruction
+    assert "property_rows" in instruction
+    assert "| # | Property | Rent | Beds | Baths | Sources |" in instruction
+    assert "[Zillow](url)" in instruction
+    assert "internal names" in instruction
     assert "Do not show raw scores" in instruction
-    assert "property_groups" in instruction
     assert "Do NOT automatically call get_listing_details" in instruction
 
 
@@ -112,6 +111,7 @@ def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_sepa
                 )
             return [
                 listing("apt-main", "100 Castro Street, Mountain View, CA 94041", "realtyapi-apartments"),
+                listing("apt-main-duplicate", "100 Castro St", "realtyapi-apartments", 3810),
                 listing("z-main", "100 Castro St", "realtyapi-zillow"),
                 listing("r-main", "100 Castro St", "realtyapi-realtor"),
                 listing("apt-unit2", "100 Castro St Apt 2, Mountain View, CA 94041", "realtyapi-apartments", 3900),
@@ -134,10 +134,21 @@ def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_sepa
         "apt-main", "z-main", "r-main"
     }
     assert groups[0]["source_count"] == 3
+    assert groups[0]["display"]["rent"] == "$3,800"
+    assert {source["label"] for source in groups[0]["display"]["sources"]} == {
+        "Apartments.com", "Zillow", "Realtor.com"
+    }
     assert {item["listing"]["id"] for item in groups[1]["postings"]} == {
         "apt-unit2", "z-unit2"
     }
     assert groups[1]["source_count"] == 2
+    rows = result["property_rows"]
+    assert rows[0]["address"] == "100 Castro Street, Mountain View, CA 94041"
+    assert rows[0]["beds"] == "2"
+    assert rows[0]["baths"] == "2"
+    assert "[Apartments.com](https://example.test/apt-main)" in rows[0]["sources"]
+    assert "[Zillow](https://example.test/z-main)" in rows[0]["sources"]
+    assert "[Realtor.com](https://example.test/r-main)" in rows[0]["sources"]
 
 
 def test_real_mode_without_realtyapi_key_fails_clearly(monkeypatch):

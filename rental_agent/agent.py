@@ -197,8 +197,39 @@ def _property_group_key(listing: Listing) -> tuple[str, str, str]:
     )
 
 
+_SOURCE_LABELS = {
+    "realtyapi-apartments": "Apartments.com",
+    "realtyapi-zillow": "Zillow",
+    "realtyapi-realtor": "Realtor.com",
+}
+
+
+def _source_label(source: str) -> str:
+    return _SOURCE_LABELS.get(source, source)
+
+
+def _display_number(values: list[float | None]) -> str:
+    known = sorted({float(value) for value in values if value is not None})
+    if not known:
+        return "Unknown"
+    if len(known) == 1:
+        value = known[0]
+        return f"{value:g}"
+    return f"{known[0]:g}–{known[-1]:g}"
+
+
+def _display_rent(values: list[float | None]) -> str:
+    known = sorted({float(value) for value in values if value is not None})
+    if not known:
+        return "Unknown"
+    if len(known) == 1:
+        return f"${known[0]:,.0f}"
+    return f"${known[0]:,.0f}–${known[-1]:,.0f}"
+
+
 def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
     groups: dict[tuple[str, str, str], dict[str, object]] = {}
+    seen_sources: dict[tuple[str, str, str], set[str]] = {}
     order: list[tuple[str, str, str]] = []
     for item in ranked:
         listing = item.listing
@@ -209,19 +240,40 @@ def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
                 "postings": [],
                 "sources": [],
             }
+            seen_sources[key] = set()
             order.append(key)
+        # The same source can emit duplicate rows for the same physical unit.
+        # Keep its highest-ranked posting only; cross-source postings remain separate.
+        if listing.source in seen_sources[key]:
+            continue
+        seen_sources[key].add(listing.source)
+        posting = item.to_dict()
+        posting["source_label"] = _source_label(listing.source)
         group = groups[key]
-        postings = group["postings"]
-        sources = group["sources"]
-        postings.append(item.to_dict())
-        if listing.source not in sources:
-            sources.append(listing.source)
+        group["postings"].append(posting)
+        group["sources"].append(listing.source)
 
     result: list[dict[str, object]] = []
     for rank, key in enumerate(order, start=1):
         group = groups[key]
+        postings = group["postings"]
+        listings = [posting["listing"] for posting in postings]
+        representative = group["representative"]["listing"]
         group["rank"] = rank
         group["source_count"] = len(group["sources"])
+        group["display"] = {
+            "address": representative["address"],
+            "rent": _display_rent([listing.get("rent") for listing in listings]),
+            "beds": _display_number([listing.get("bedrooms") for listing in listings]),
+            "baths": _display_number([listing.get("bathrooms") for listing in listings]),
+            "sources": [
+                {
+                    "label": posting["source_label"],
+                    "url": posting["listing"].get("source_url"),
+                }
+                for posting in postings
+            ],
+        }
         result.append(group)
     return result
 
@@ -274,6 +326,14 @@ def search_listings(
     ranked_payload = [item.to_dict() for item in ranked]
     property_groups = _group_ranked_properties(ranked)
     representative_payload = [group["representative"] for group in property_groups]
+    property_rows = []
+    for group in property_groups:
+        display = dict(group["display"])
+        display["sources"] = " · ".join(
+            f"[{source['label']}]({source['url']})" if source.get("url") else source["label"]
+            for source in group["display"]["sources"]
+        )
+        property_rows.append(display | {"rank": group["rank"]})
     verification_candidates = [
         {
             "rank": index + 1,
@@ -291,8 +351,9 @@ def search_listings(
     return {
         "provider": provider.health()["provider"],
         "matched_count": len(property_groups),
-        "posting_count": len(ranked),
+        "posting_count": sum(len(group["postings"]) for group in property_groups),
         "property_groups": property_groups,
+        "property_rows": property_rows,
         "top_10": representative_payload[:10],
         "top_5": representative_payload[:5],
         "soft_preferences_unverified": list(req.soft_preferences),
@@ -406,16 +467,21 @@ Candidate-first behavior:
     as satisfying the current hard constraints.
 
 Answer format:
-13. Start with one concise sentence summarizing the effective search and report both
-    unique property count (matched_count) and total posting count (posting_count).
-14. Use `## Matching properties` and list every property_group. For each group:
-    `### N. Address`
-    Then one bullet per posting using a Markdown link in the literal form `[ADDRESS](SOURCE_URL)` and source-specific facts, e.g.
-    `- [Zillow]($URL) — $3,200/mo · 2 bed · bath unknown`
-    `- [Apartments.com]($URL) — $3,300/mo · 2 bed · 2 bath`
-15. If a group has only one posting, still show its single source bullet.
-16. Do not show raw scores or internal scores.
-17. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
+13. Start with one concise sentence summarizing the effective search and report the
+    unique property count (matched_count). Do not narrate every row.
+14. For a broad search/refinement, render every entry in property_rows in ONE compact
+    Markdown table with exactly these columns:
+    `| # | Property | Rent | Beds | Baths | Sources |`
+15. Use the precomputed property_rows display values exactly. The `sources` field is
+    already a Markdown string such as `[Zillow](url) · [Apartments.com](url)`. Copy it
+    into the Sources cell; do not rewrite source names or expose internal names such as
+    `realtyapi-zillow` or `realtyapi-realtor`.
+16. Do not create a separate heading or bullet list for each property. Keep the full
+    result set scannable in one table even when there are 20+ properties.
+17. If multiple sources disagree on rent/beds/baths, the precomputed display value may
+    be a range. Do not choose one source as truth during a broad search.
+18. Do not show raw scores, internal IDs, provider names, or internal source names.
+19. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
 
 """.strip(),
     tools=[search_listings, get_listing_details],
