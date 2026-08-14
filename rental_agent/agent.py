@@ -31,6 +31,9 @@ SUPPORTED_CITIES = {
 
 _REQUIREMENTS_STATE_KEY = "rental_search_requirements"
 _CANDIDATES_STATE_KEY = "rental_last_candidates"
+_RAW_CACHE_STATE_KEY = "rental_search_raw_cache"
+_CACHE_SCOPE_STATE_KEY = "rental_search_cache_scope"
+_CACHE_PROVIDER_STATE_KEY = "rental_search_cache_provider"
 _VERIFIED_STATE_KEY = "rental_verified_details"
 
 
@@ -347,6 +350,57 @@ def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
     return result
 
 
+def _is_narrower_or_equal(current: SearchRequirements, cached: SearchRequirements) -> bool:
+    """Return True when current hard constraints are a subset of cached search scope."""
+    if current.city.casefold() != cached.city.casefold():
+        return False
+    if current.state.upper() != cached.state.upper():
+        return False
+
+    def max_is_narrower(value: float | None, base: float | None) -> bool:
+        if base is None:
+            return True
+        return value is not None and value <= base
+
+    def min_is_narrower(value: float | None, base: float | None) -> bool:
+        if base is None:
+            return True
+        return value is not None and value >= base
+
+    if not max_is_narrower(current.max_rent, cached.max_rent):
+        return False
+    if not min_is_narrower(current.min_bedrooms, cached.min_bedrooms):
+        return False
+    if not max_is_narrower(current.max_bedrooms, cached.max_bedrooms):
+        return False
+    if not min_is_narrower(current.min_bathrooms, cached.min_bathrooms):
+        return False
+    if not max_is_narrower(current.max_bathrooms, cached.max_bathrooms):
+        return False
+    if cached.pets_required and not current.pets_required:
+        return False
+    if cached.parking_required and not current.parking_required:
+        return False
+    return True
+
+
+def _same_hard_scope(left: SearchRequirements, right: SearchRequirements) -> bool:
+    return _is_narrower_or_equal(left, right) and _is_narrower_or_equal(right, left)
+
+
+def _cached_listings(value: object) -> list[Listing]:
+    if not isinstance(value, list):
+        return []
+    result: list[Listing] = []
+    for item in value:
+        if isinstance(item, dict):
+            try:
+                result.append(_listing_from_dict(item))
+            except (TypeError, ValueError):
+                continue
+    return result
+
+
 def search_listings(
     city: str = "",
     state: str = "",
@@ -359,14 +413,17 @@ def search_listings(
     parking_required: bool | None = None,
     soft_preferences: str = "",
     reset_search: bool = False,
+    force_refresh: bool = False,
     tool_context: Optional[ToolContext] = None,
 ) -> dict[str, object]:
     """Search rentals, remembering omitted requirements within this ADK session.
 
     On a follow-up search, pass only requirements the user changed. Omitted values
-    inherit from the previous search in the same session. Set reset_search=True
-    only when the user explicitly wants to start over. Broad searches return all
-    matching property_groups; detail verification is on demand.
+    inherit from the previous search in the same session. Narrower/equal follow-ups
+    reuse the last raw session cache before calling the provider again. Set
+    reset_search=True only when the user explicitly wants to start over; set
+    force_refresh=True only when the user explicitly asks for fresh data. Broad
+    searches return all matching property_groups; detail verification is on demand.
     """
     previous = None
     if tool_context is not None:
@@ -389,9 +446,65 @@ def search_listings(
         reset_search=reset_search,
     )
 
-    provider = get_provider()
-    normalized = provider.search(req)
-    ranked = filter_and_rank(normalized, req, top_n=max(1, len(normalized)))
+    cached_scope = None
+    cached_raw: list[Listing] = []
+    cached_provider = None
+    if tool_context is not None:
+        cached_scope = _requirements_from_dict(
+            tool_context.state.get(_CACHE_SCOPE_STATE_KEY)
+        )
+        cached_raw = _cached_listings(tool_context.state.get(_RAW_CACHE_STATE_KEY))
+        provider_value = tool_context.state.get(_CACHE_PROVIDER_STATE_KEY)
+        cached_provider = str(provider_value) if provider_value else None
+
+    use_cache = (
+        not reset_search
+        and not force_refresh
+        and cached_scope is not None
+        and _is_narrower_or_equal(req, cached_scope)
+    )
+    normalized = cached_raw if use_cache else []
+    ranked = (
+        filter_and_rank(normalized, req, top_n=max(1, len(normalized)))
+        if use_cache
+        else []
+    )
+
+    # If a stricter refinement has no deterministic matches in the cached raw
+    # postings, query the provider once with the complete new constraints. This
+    # lets source-side filters provide evidence that the broad cache did not carry.
+    needs_provider = not use_cache or (
+        not ranked
+        and cached_scope is not None
+        and not _same_hard_scope(req, cached_scope)
+    )
+    provider_search_performed = False
+    refresh_reason = "session_cache"
+    provider_name = cached_provider or "unknown"
+    if needs_provider:
+        provider = get_provider()
+        normalized = provider.search(req)
+        provider_name = str(provider.health()["provider"])
+        provider_search_performed = True
+        if force_refresh:
+            refresh_reason = "force_refresh"
+        elif reset_search or cached_scope is None:
+            refresh_reason = "initial_or_reset_search"
+        elif not _is_narrower_or_equal(req, cached_scope):
+            refresh_reason = "expanded_or_changed_scope"
+        else:
+            refresh_reason = "cache_had_no_matches"
+        ranked = filter_and_rank(normalized, req, top_n=max(1, len(normalized)))
+        if tool_context is not None:
+            tool_context.state[_RAW_CACHE_STATE_KEY] = [item.to_dict() for item in normalized]
+            tool_context.state[_CACHE_SCOPE_STATE_KEY] = _requirements_to_dict(req)
+            tool_context.state[_CACHE_PROVIDER_STATE_KEY] = provider_name
+
+    data_source = (
+        "session_cache"
+        if not provider_search_performed
+        else ("realtyapi" if provider_name.startswith("realtyapi") else provider_name)
+    )
     ranked_payload = [item.to_dict() for item in ranked]
     property_groups = _group_ranked_properties(ranked)
     representative_payload = [group["representative"] for group in property_groups]
@@ -429,7 +542,10 @@ def search_listings(
         tool_context.state[_VERIFIED_STATE_KEY] = {}
 
     return {
-        "provider": provider.health()["provider"],
+        "provider": provider_name,
+        "data_source": data_source,
+        "provider_search_performed": provider_search_performed,
+        "refresh_reason": refresh_reason,
         "active_filters": _active_filters(req),
         "matched_count": len(property_groups),
         "posting_count": sum(len(group["postings"]) for group in property_groups),
@@ -532,11 +648,15 @@ Memory and search behavior:
    Treat quiet, newer, modern, near transit, or similar language as soft preferences.
 
 Candidate-first behavior:
-5. For every initial or refined search, call search_listings exactly once.
-6. Do NOT automatically call get_listing_details after a broad search.
-7. Broad searches must show every entry in property_groups, not only top_10.
+5. For every initial or refined search, call search_listings exactly once. The tool is
+   cache-first: narrower/equal refinements reuse session data and do not call RealtyAPI
+   when cached candidates can satisfy the new hard constraints.
+6. Pass force_refresh=True only when the user explicitly asks to refresh, search again
+   from the source, or fetch fresh listings. Do NOT use it for normal refinements.
+7. Do NOT automatically call get_listing_details after a broad search.
+8. Broad searches must show every entry in property_groups, not only top_10.
    Each property group represents the same physical address/unit across sources.
-8. For each property group, show the property once, then list every source posting
+9. For each property group, show the property once, then list every source posting
    underneath it. Preserve source-specific rent, beds, baths, URL, and source name.
    If sources disagree, show their values separately rather than inventing a merged fact.
 9. Never collapse different unit numbers in the same building. A group may contain

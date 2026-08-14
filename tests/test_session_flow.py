@@ -140,3 +140,88 @@ def test_session_memory_accumulates_bath_parking_pet_and_budget(monkeypatch):
     )
 
     get_provider.cache_clear()
+
+
+def test_narrower_followups_reuse_session_cache_before_provider_search(monkeypatch):
+    class CountingProvider(MockListingProvider):
+        def __init__(self):
+            super().__init__()
+            self.search_calls = 0
+
+        def search(self, requirements):
+            self.search_calls += 1
+            return super().search(requirements)
+
+        def health(self):
+            return {"ok": True, "provider": "realtyapi-multi"}
+
+    provider = CountingProvider()
+    monkeypatch.setattr(agent_module, "get_provider", lambda: provider)
+    context = SimpleNamespace(state={})
+
+    first = search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        tool_context=context,
+    )
+    assert provider.search_calls == 1
+    assert first["data_source"] == "realtyapi"
+    assert first["provider_search_performed"] is True
+
+    baths = search_listings(min_bathrooms=2, tool_context=context)
+    assert provider.search_calls == 1
+    assert baths["data_source"] == "session_cache"
+    assert baths["provider_search_performed"] is False
+
+    parking = search_listings(parking_required=True, tool_context=context)
+    assert provider.search_calls == 1
+    assert parking["data_source"] == "session_cache"
+
+    pets = search_listings(pets_required=True, tool_context=context)
+    assert provider.search_calls == 1
+    assert pets["data_source"] == "session_cache"
+    assert pets["matched_count"] > 0
+
+    # No cached listing can satisfy this stricter budget, so one fresh provider
+    # search is allowed to look for source-side matches/evidence.
+    empty = search_listings(max_rent=3000, tool_context=context)
+    assert provider.search_calls == 2
+    assert empty["data_source"] == "realtyapi"
+    assert empty["refresh_reason"] == "cache_had_no_matches"
+    assert empty["matched_count"] == 0
+
+    # Repeating the exact same empty search must not burn another provider call.
+    repeated = search_listings(tool_context=context)
+    assert provider.search_calls == 2
+    assert repeated["data_source"] == "session_cache"
+    assert repeated["matched_count"] == 0
+
+
+def test_broadened_scope_and_force_refresh_call_provider(monkeypatch):
+    class CountingProvider(MockListingProvider):
+        def __init__(self):
+            super().__init__()
+            self.search_calls = 0
+
+        def search(self, requirements):
+            self.search_calls += 1
+            return super().search(requirements)
+
+        def health(self):
+            return {"ok": True, "provider": "realtyapi-multi"}
+
+    provider = CountingProvider()
+    monkeypatch.setattr(agent_module, "get_provider", lambda: provider)
+    context = SimpleNamespace(state={})
+
+    search_listings(city="Mountain View", max_rent=3500, min_bedrooms=2, tool_context=context)
+    assert provider.search_calls == 1
+
+    broader = search_listings(max_rent=4000, tool_context=context)
+    assert provider.search_calls == 2
+    assert broader["refresh_reason"] == "expanded_or_changed_scope"
+
+    refreshed = search_listings(force_refresh=True, tool_context=context)
+    assert provider.search_calls == 3
+    assert refreshed["refresh_reason"] == "force_refresh"
