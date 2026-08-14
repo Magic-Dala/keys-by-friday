@@ -1,22 +1,145 @@
-# Keys by Friday — AI Rental Search Agent
+# Keys by Friday
 
-> **Stable Reference — keep this document frozen unless the project direction or system boundary changes.**
+AI rental search built with **Next.js + FastAPI + Google ADK**.
 
-Keys by Friday is an AI rental-search MVP that turns a natural-language request into verified, explainable rental recommendations.
+If you just want to run the project, start here.
 
-## Final Direction
+## Quick Start
 
-```text
-Next.js Frontend
-→ FastAPI Backend
-→ AgentService
-→ Google ADK Rental Agent
-→ Rental Provider
+### 1. Install the prerequisites
+
+You need:
+
+- [Git](https://git-scm.com/)
+- [uv](https://docs.astral.sh/uv/)
+- [Node.js](https://nodejs.org/) 24 recommended
+
+On Windows, install `uv` with:
+
+```powershell
+winget install --id=astral-sh.uv -e
 ```
 
-This is the project baseline. Feature work should extend this flow instead of introducing a parallel architecture.
+### 2. Initialize the project once
 
-## Ownership
+From the repository root:
+
+```powershell
+.\kbf init
+```
+
+The setup does the rest for you:
+
+- installs Python and FastAPI dependencies
+- installs frontend npm dependencies
+- shows where to create the Gemini and RealtyAPI keys
+- asks for the keys securely
+- creates the local `.env` files
+- installs the normal `kbf` command
+
+API keys:
+
+- Gemini: https://aistudio.google.com/app/apikey
+- RealtyAPI: https://www.realtyapi.io/
+
+### 3. Start the app
+
+Use either form:
+
+```powershell
+kbf start
+```
+
+or:
+
+```powershell
+.\kbf start
+```
+
+Then open **http://localhost:3000**.
+
+Useful local URLs:
+
+| Service | URL |
+|---|---|
+| Product UI | http://localhost:3000 |
+| API docs | http://localhost:8000/docs |
+| Backend health | http://localhost:8000/health |
+| ADK Web | http://localhost:8765 |
+
+Press `Ctrl+C` once to stop the frontend and backend.
+
+## CLI Commands
+
+After the first `init`, both the installed command and repository-local launcher are supported:
+
+| Task | Installed command | Repo-local command |
+|---|---|---|
+| Initialize / refresh setup | `kbf init` | `.\kbf init` |
+| Start the full product | `kbf start` | `.\kbf start` |
+| Start ADK Web only | `kbf agent` | `.\kbf agent` |
+
+For a completely fresh clone, use `.\kbf init` first. That command installs the normal `kbf` command for later use.
+
+If `kbf` is not found in the current terminal after initialization, open a new terminal or use the `.\kbf ...` form.
+
+## Agent-only Development
+
+To work directly with the Google ADK developer UI without starting the product frontend:
+
+```powershell
+kbf agent
+```
+
+or:
+
+```powershell
+.\kbf agent
+```
+
+Then open **http://localhost:8765**.
+
+This wraps:
+
+```powershell
+uv run adk web . --no-reload --port 8765
+```
+
+ADK Web is for Agent development and debugging. The normal product does **not** depend on port 8765.
+
+## Custom Ports
+
+If port `3000` or `8000` is already being used:
+
+```powershell
+kbf start --frontend-port 3001 --backend-port 8021
+```
+
+The repository-local form works too:
+
+```powershell
+.\kbf start --frontend-port 3001 --backend-port 8021
+```
+
+## How the Product Connects
+
+```text
+Browser
+  ↓
+Next.js Frontend :3000
+  ↓  POST /api/chat
+FastAPI Backend :8000
+  ↓
+AgentService
+  ↓
+Google ADK Rental Agent
+  ↓
+Rental Provider
+```
+
+The frontend talks only to the FastAPI API. The backend owns the ADK adapter. Rental search, ranking, verification, and provider logic stay in `rental_agent/**`.
+
+## Team Ownership
 
 ```text
 frontend/**      → Frontend
@@ -25,31 +148,39 @@ rental_agent/**  → ADK Agent and rental decision logic
 docs/**          → Shared project references
 ```
 
-## Shared Contract
+The shared web contract is intentionally small:
 
 ```text
 GET  /health
 POST /api/chat
 ```
 
-Frontend code must not import Python or Google ADK directly. Backend code must not duplicate Agent search, ranking, or provider logic.
+Feature work should extend this baseline instead of creating a parallel architecture.
+
+## Before Opening a PR
+
+Run the same baseline checks used by CI:
+
+```powershell
+uv run pytest backend/tests tests -q
+uv run python -m compileall backend rental_agent -q
+
+cd frontend
+npm run check
+```
+
+GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| `README.md` | Final project direction |
+| `README.md` | Start here: setup, commands, and project overview |
 | `docs/architecture.md` | Stable system boundaries |
 | `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
-| `docs/development.md` | Stable team workflow and local setup |
-| `docs/agent.md` | Stable Agent rules |
+| `docs/development.md` | Manual service commands and contributor workflow |
+| `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |
 
-## Documentation Rule
-
-Do not update Stable Reference documents for normal feature work, bug fixes, branch changes, test-count changes, or temporary implementation details.
-
-Only `status.md` and `roadmap.md` are expected to change frequently.
-
-Stable Reference documents should change only when the team intentionally changes the project direction, architecture, API contract, ownership boundary, workflow, or Agent authority rules.
+Stable documents change only when the actual setup, architecture, API contract, ownership, or Agent authority changes. Normal progress belongs in `docs/status.md` and `docs/roadmap.md`.
