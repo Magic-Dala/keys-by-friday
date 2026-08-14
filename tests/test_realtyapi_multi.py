@@ -222,6 +222,9 @@ def test_one_source_failure_does_not_fail_search():
         "realtyapi-apartments",
         "realtyapi-realtor",
     }
+    health = provider.health()
+    assert health["search_complete"] is False
+    assert health["failed_sources"] == ["zillow"]
 
 
 def test_get_listing_routes_ids_to_correct_detail_endpoint():

@@ -115,8 +115,8 @@ def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_sepa
             return [
                 listing("apt-main", "100 Castro Street, Mountain View, CA 94041", "realtyapi-apartments"),
                 listing("apt-main-duplicate", "100 Castro St", "realtyapi-apartments", 3810),
-                listing("z-main", "100 Castro St", "realtyapi-zillow"),
-                listing("r-main", "100 Castro St", "realtyapi-realtor"),
+                listing("z-main", "100 Castro St", "realtyapi-zillow", 4000),
+                listing("r-main", "100 Castro St", "realtyapi-realtor", 3900),
                 listing("apt-unit2", "100 Castro St Apt 2, Mountain View, CA 94041", "realtyapi-apartments", 3900),
                 listing("z-unit2", "100 Castro St #2", "realtyapi-zillow", 3900),
             ]
@@ -137,29 +137,29 @@ def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_sepa
         "apt-main", "z-main", "r-main"
     }
     assert groups[0]["source_count"] == 3
-    assert groups[0]["display"]["rent"] == "$3,800"
+    assert groups[0]["display"]["rent"] == "$3,800–$4,000"
     assert {source["label"] for source in groups[0]["display"]["sources"]} == {
         "Apartments.com", "Zillow", "Realtor.com"
     }
+    sources = {source["label"]: source for source in groups[0]["display"]["sources"]}
+    assert sources["Apartments.com"]["rent"] == "$3,800"
+    assert sources["Zillow"]["rent"] == "$4,000"
+    assert sources["Realtor.com"]["rent"] == "$3,900"
     assert {item["listing"]["id"] for item in groups[1]["postings"]} == {
         "apt-unit2", "z-unit2"
     }
     assert groups[1]["source_count"] == 2
-    rows = result["property_rows"]
-    assert rows[0]["address"] == "100 Castro Street"
-    assert rows[0]["full_address"] == "100 Castro Street, Mountain View, CA 94041"
-    assert rows[0]["beds"] == "2"
-    assert rows[0]["baths"] == "2"
-    assert "[Apartments.com](https://example.test/apt-main)" in rows[0]["sources"]
-    assert "[Zillow](https://example.test/z-main)" in rows[0]["sources"]
-    assert "[Realtor.com](https://example.test/r-main)" in rows[0]["sources"]
+    assert groups[0]["display"]["address"] == "100 Castro Street"
+    assert groups[0]["display"]["full_address"] == "100 Castro Street, Mountain View, CA 94041"
+    assert groups[0]["display"]["beds"] == "2"
+    assert groups[0]["display"]["baths"] == "2"
     sections = result["display_sections"]
     assert result["cross_listed_count"] == 2
-    assert sections["cross_listed"][0].startswith("1. **100 Castro Street** — $3,800 · 2 bd · 2 ba")
-    assert "Apartments.com" in sections["cross_listed"][0]
-    assert "Zillow" in sections["cross_listed"][0]
-    assert "Realtor.com" in sections["cross_listed"][0]
-    assert sections["cross_listed"][1].startswith("2. **100 Castro St Apt 2** — $3,900 · 2 bd · 2 ba")
+    assert sections["cross_listed"][0].startswith("1. **100 Castro Street** — [Apartments.com]")
+    assert "[Apartments.com](https://example.test/apt-main) — $3,800 · 2 bd · 2 ba" in sections["cross_listed"][0]
+    assert "[Zillow](https://example.test/z-main) — $4,000 · 2 bd · 2 ba" in sections["cross_listed"][0]
+    assert "[Realtor.com](https://example.test/r-main) — $3,900 · 2 bd · 2 ba" in sections["cross_listed"][0]
+    assert sections["cross_listed"][1].startswith("2. **100 Castro St Apt 2** — [Apartments.com]")
     assert sections["other_matches"] == []
 
 
@@ -208,7 +208,9 @@ def test_query_backed_bathroom_minimum_displays_as_lower_bound(monkeypatch):
     )
 
     assert result["matched_count"] == 1
-    assert result["property_rows"][0]["baths"] == "2+"
-    assert "[Zillow](https://www.zillow.com/homedetails/123_zpid/)" in (
-        result["property_rows"][0]["sources"]
+    display = result["property_groups"][0]["display"]
+    assert display["baths"] == "2+"
+    assert display["sources"][0]["baths"] == "2+"
+    assert "[Zillow](https://www.zillow.com/homedetails/123_zpid/) — $3,500 · 2 bd · 2+ ba" in (
+        result["display_sections"]["other_matches"][0]
     )

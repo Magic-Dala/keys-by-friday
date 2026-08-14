@@ -198,6 +198,52 @@ def test_narrower_followups_reuse_session_cache_before_provider_search(monkeypat
     assert repeated["matched_count"] == 0
 
 
+def test_incomplete_multi_source_cache_is_retried_before_reuse(monkeypatch):
+    class IncompleteThenCompleteProvider(MockListingProvider):
+        def __init__(self):
+            super().__init__()
+            self.search_calls = 0
+            self.search_complete = False
+
+        def search(self, requirements):
+            self.search_calls += 1
+            self.search_complete = self.search_calls > 1
+            return super().search(requirements)
+
+        def health(self):
+            return {
+                "ok": True,
+                "provider": "realtyapi-multi",
+                "search_complete": self.search_complete,
+                "failed_sources": [] if self.search_complete else ["zillow"],
+            }
+
+    provider = IncompleteThenCompleteProvider()
+    monkeypatch.setattr(agent_module, "get_provider", lambda: provider)
+    context = SimpleNamespace(state={})
+
+    first = search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        tool_context=context,
+    )
+    assert provider.search_calls == 1
+    assert first["search_complete"] is False
+    assert first["failed_sources"] == ["zillow"]
+
+    refined = search_listings(parking_required=True, tool_context=context)
+    assert provider.search_calls == 2
+    assert refined["provider_search_performed"] is True
+    assert refined["refresh_reason"] == "incomplete_cache"
+    assert refined["search_complete"] is True
+
+    cached = search_listings(pets_required=True, tool_context=context)
+    assert provider.search_calls == 2
+    assert cached["provider_search_performed"] is False
+    assert cached["data_source"] == "session_cache"
+
+
 def test_broadened_scope_and_force_refresh_call_provider(monkeypatch):
     class CountingProvider(MockListingProvider):
         def __init__(self):
@@ -227,7 +273,7 @@ def test_broadened_scope_and_force_refresh_call_provider(monkeypatch):
     assert refreshed["refresh_reason"] == "force_refresh"
 
 
-def test_legacy_session_candidates_avoid_provider_search_for_narrower_refinement(monkeypatch):
+def test_legacy_realtyapi_cache_without_completeness_is_refreshed(monkeypatch):
     class CountingProvider(MockListingProvider):
         def __init__(self):
             super().__init__()
@@ -254,19 +300,105 @@ def test_legacy_session_candidates_avoid_provider_search_for_narrower_refinement
     search_listings(parking_required=True, tool_context=context)
     assert provider.search_calls == 1
 
-    # Simulate a session created before raw-cache support: requirements and the
-    # previous complete ranked candidates survive, but the new cache keys do not.
+    # A legacy RealtyAPI session has no completeness evidence. It must be
+    # refreshed instead of being treated as an authoritative cache.
     context.state.pop(agent_module._RAW_CACHE_STATE_KEY, None)
     context.state.pop(agent_module._CACHE_SCOPE_STATE_KEY, None)
     context.state.pop(agent_module._CACHE_PROVIDER_STATE_KEY, None)
+    context.state.pop(agent_module._CACHE_COMPLETE_STATE_KEY, None)
+    context.state.pop(agent_module._CACHE_FAILED_SOURCES_STATE_KEY, None)
 
     pets = search_listings(pets_required=True, tool_context=context)
 
-    assert provider.search_calls == 1
-    assert pets["provider_search_performed"] is False
-    assert pets["data_source"] == "session_cache_migrated"
+    assert provider.search_calls == 2
+    assert pets["provider_search_performed"] is True
+    assert pets["data_source"] == "realtyapi"
+    assert pets["refresh_reason"] == "incomplete_cache"
     assert pets["matched_count"] > 0
     assert pets["effective_requirements"]["parking_required"] is True
     assert pets["effective_requirements"]["pets_required"] is True
     assert agent_module._RAW_CACHE_STATE_KEY in context.state
     assert agent_module._CACHE_SCOPE_STATE_KEY in context.state
+
+
+def test_visible_group_rank_matches_verification_rank(monkeypatch):
+    class RankProvider:
+        def __init__(self):
+            self.by_id: dict[str, Listing] = {}
+
+        def search(self, requirements):
+            listings = [
+                Listing(
+                    id="cheap-single",
+                    address="10 Cheap St, Mountain View, CA 94041",
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code="94041",
+                    rent=3000,
+                    bedrooms=2,
+                    bathrooms=2,
+                    source="realtyapi-apartments",
+                    source_url="https://example.test/cheap",
+                ),
+                Listing(
+                    id="cross-a",
+                    address="20 Cross Street, Mountain View, CA 94041",
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code="94041",
+                    rent=3500,
+                    bedrooms=2,
+                    bathrooms=2,
+                    source="realtyapi-apartments",
+                    source_url="https://example.test/cross-a",
+                ),
+                Listing(
+                    id="cross-z",
+                    address="20 Cross St, Mountain View, CA 94041",
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code="94041",
+                    rent=3500,
+                    bedrooms=2,
+                    bathrooms=2,
+                    source="realtyapi-zillow",
+                    source_url="https://example.test/cross-z",
+                ),
+            ]
+            self.by_id = {listing.id: listing for listing in listings}
+            return listings
+
+        def get_listing(self, listing_id):
+            return replace(self.by_id[listing_id], detail_verified=True)
+
+        def health(self):
+            return {"ok": True, "provider": "realtyapi-multi"}
+
+    provider = RankProvider()
+    monkeypatch.setattr(agent_module, "get_provider", lambda: provider)
+    context = SimpleNamespace(state={})
+
+    result = search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        tool_context=context,
+    )
+
+    assert result["property_groups"][0]["representative"]["listing"]["id"] == "cross-a"
+    assert result["property_groups"][0]["rank"] == 1
+    assert result["display_sections"]["cross_listed"][0].startswith(
+        "1. **20 Cross Street**"
+    )
+    assert result["display_sections"]["other_matches"][0].startswith(
+        "2. **10 Cheap St**"
+    )
+    assert result["verification_candidates"][0] == {
+        "rank": 1,
+        "listing_id": "cross-a",
+        "address": "20 Cross Street, Mountain View, CA 94041",
+    }
+    assert result["top_5"][0]["listing"]["id"] == "cross-a"
+
+    verified_alternate = get_listing_details("cross-z", tool_context=context)
+    assert verified_alternate["verification"]["current_search_rank"] == 1

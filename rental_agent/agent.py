@@ -34,6 +34,8 @@ _CANDIDATES_STATE_KEY = "rental_last_candidates"
 _RAW_CACHE_STATE_KEY = "rental_search_raw_cache"
 _CACHE_SCOPE_STATE_KEY = "rental_search_cache_scope"
 _CACHE_PROVIDER_STATE_KEY = "rental_search_cache_provider"
+_CACHE_COMPLETE_STATE_KEY = "rental_search_cache_complete"
+_CACHE_FAILED_SOURCES_STATE_KEY = "rental_search_cache_failed_sources"
 _VERIFIED_STATE_KEY = "rental_verified_details"
 
 
@@ -280,22 +282,33 @@ def _short_address(address: str) -> str:
     return address.split(",", 1)[0].strip() or address
 
 
-def _compact_property_line(rank: int, display: dict[str, object]) -> str:
+def _source_posting_text(source: dict[str, object]) -> str:
+    label = str(source.get("label") or "Source")
+    url = source.get("url")
+    linked_label = f"[{label}]({url})" if url else label
     facts: list[str] = []
-    rent = str(display.get("rent") or "—")
-    beds = str(display.get("beds") or "—")
-    baths = str(display.get("baths") or "—")
+    rent = str(source.get("rent") or "—")
+    beds = str(source.get("beds") or "—")
+    baths = str(source.get("baths") or "—")
     if rent != "—":
         facts.append(rent)
     if beds != "—":
         facts.append(f"{beds} bd")
     if baths != "—":
         facts.append(f"{baths} ba")
-    sources = str(display.get("sources") or "")
-    if sources:
-        facts.append(sources)
-    suffix = " · ".join(facts)
-    return f"{rank}. **{display['address']}**" + (f" — {suffix}" if suffix else "")
+    return linked_label + (f" — {' · '.join(facts)}" if facts else "")
+
+
+def _compact_property_line(rank: int, display: dict[str, object]) -> str:
+    sources = display.get("sources")
+    source_text = ""
+    if isinstance(sources, list):
+        source_text = "; ".join(
+            _source_posting_text(source)
+            for source in sources
+            if isinstance(source, dict)
+        )
+    return f"{rank}. **{display['address']}**" + (f" — {source_text}" if source_text else "")
 
 
 def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
@@ -325,12 +338,11 @@ def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
         group["sources"].append(listing.source)
 
     result: list[dict[str, object]] = []
-    for rank, key in enumerate(order, start=1):
+    for key in order:
         group = groups[key]
         postings = group["postings"]
         listings = [posting["listing"] for posting in postings]
         representative = group["representative"]["listing"]
-        group["rank"] = rank
         group["source_count"] = len(group["sources"])
         group["display"] = {
             "address": _short_address(representative["address"]),
@@ -342,11 +354,20 @@ def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
                 {
                     "label": posting["source_label"],
                     "url": posting["listing"].get("source_url"),
+                    "rent": _display_rent([posting["listing"].get("rent")]),
+                    "beds": _display_number([posting["listing"].get("bedrooms")]),
+                    "baths": _display_bathrooms([posting["listing"]]),
                 }
                 for posting in postings
             ],
         }
         result.append(group)
+
+    # Cross-listed properties are intentionally displayed first. This is the
+    # canonical group order used by every rank-dependent output below.
+    result.sort(key=lambda group: 0 if group["source_count"] > 1 else 1)
+    for rank, group in enumerate(result, start=1):
+        group["rank"] = rank
     return result
 
 
@@ -467,6 +488,8 @@ def search_listings(
     cached_scope = None
     cached_raw: list[Listing] = []
     cached_provider = None
+    cached_complete = False
+    cached_failed_sources: tuple[str, ...] = ()
     migrated_candidate_cache = False
     if tool_context is not None:
         cached_scope = _requirements_from_dict(
@@ -475,6 +498,10 @@ def search_listings(
         cached_raw = _cached_listings(tool_context.state.get(_RAW_CACHE_STATE_KEY))
         provider_value = tool_context.state.get(_CACHE_PROVIDER_STATE_KEY)
         cached_provider = str(provider_value) if provider_value else None
+        cached_complete = tool_context.state.get(_CACHE_COMPLETE_STATE_KEY) is True
+        failed_value = tool_context.state.get(_CACHE_FAILED_SOURCES_STATE_KEY)
+        if isinstance(failed_value, (list, tuple)):
+            cached_failed_sources = tuple(str(item) for item in failed_value if str(item))
 
         # Sessions created before raw-cache support still have the full ranked
         # candidate set from their previous search. For narrower refinements,
@@ -488,6 +515,9 @@ def search_listings(
                 cached_scope = previous
                 cached_raw = legacy_candidates
                 migrated_candidate_cache = True
+                # Legacy sessions have no completeness evidence. Refresh once
+                # rather than guessing that a partial provider result was complete.
+                cached_complete = False
                 if cached_provider is None:
                     cached_provider = (
                         "realtyapi-multi"
@@ -499,6 +529,7 @@ def search_listings(
         not reset_search
         and not force_refresh
         and cached_scope is not None
+        and cached_complete
         and _is_narrower_or_equal(req, cached_scope)
     )
     normalized = cached_raw if use_cache else []
@@ -519,15 +550,27 @@ def search_listings(
     provider_search_performed = False
     refresh_reason = "session_cache"
     provider_name = cached_provider or "unknown"
+    search_complete = cached_complete
+    failed_sources = list(cached_failed_sources)
     if needs_provider:
         provider = get_provider()
         normalized = provider.search(req)
-        provider_name = str(provider.health()["provider"])
+        provider_health = provider.health()
+        provider_name = str(provider_health["provider"])
+        search_complete = provider_health.get("search_complete") is not False
+        failed_value = provider_health.get("failed_sources", [])
+        failed_sources = (
+            [str(item) for item in failed_value if str(item)]
+            if isinstance(failed_value, (list, tuple))
+            else []
+        )
         provider_search_performed = True
         if force_refresh:
             refresh_reason = "force_refresh"
         elif reset_search or cached_scope is None:
             refresh_reason = "initial_or_reset_search"
+        elif not cached_complete:
+            refresh_reason = "incomplete_cache"
         elif not _is_narrower_or_equal(req, cached_scope):
             refresh_reason = "expanded_or_changed_scope"
         else:
@@ -537,6 +580,8 @@ def search_listings(
             tool_context.state[_RAW_CACHE_STATE_KEY] = [item.to_dict() for item in normalized]
             tool_context.state[_CACHE_SCOPE_STATE_KEY] = _requirements_to_dict(req)
             tool_context.state[_CACHE_PROVIDER_STATE_KEY] = provider_name
+            tool_context.state[_CACHE_COMPLETE_STATE_KEY] = search_complete
+            tool_context.state[_CACHE_FAILED_SOURCES_STATE_KEY] = failed_sources
 
     data_source = (
         "session_cache_migrated"
@@ -552,54 +597,57 @@ def search_listings(
         tool_context.state[_RAW_CACHE_STATE_KEY] = [item.to_dict() for item in cached_raw]
         tool_context.state[_CACHE_SCOPE_STATE_KEY] = _requirements_to_dict(cached_scope)
         tool_context.state[_CACHE_PROVIDER_STATE_KEY] = provider_name
-    ranked_payload = [item.to_dict() for item in ranked]
+        tool_context.state[_CACHE_COMPLETE_STATE_KEY] = cached_complete
+        tool_context.state[_CACHE_FAILED_SOURCES_STATE_KEY] = list(cached_failed_sources)
+
     property_groups = _group_ranked_properties(ranked)
     representative_payload = [group["representative"] for group in property_groups]
-    property_rows = []
+    candidate_payload: list[dict[str, object]] = []
     for group in property_groups:
-        display = dict(group["display"])
-        display["sources"] = " · ".join(
-            f"[{source['label']}]({source['url']})" if source.get("url") else source["label"]
-            for source in group["display"]["sources"]
-        )
-        property_rows.append(display | {"rank": group["rank"], "source_count": group["source_count"]})
+        for posting in group["postings"]:
+            candidate = dict(posting)
+            candidate["current_search_rank"] = group["rank"]
+            candidate_payload.append(candidate)
 
-    cross_listed_rows = [row for row in property_rows if row["source_count"] > 1]
-    other_rows = [row for row in property_rows if row["source_count"] <= 1]
-    display_sections = {"cross_listed": [], "other_matches": []}
-    display_rank = 1
-    for row in cross_listed_rows:
-        display_sections["cross_listed"].append(_compact_property_line(display_rank, row))
-        display_rank += 1
-    for row in other_rows:
-        display_sections["other_matches"].append(_compact_property_line(display_rank, row))
-        display_rank += 1
+    cross_listed_groups = [group for group in property_groups if group["source_count"] > 1]
+    other_groups = [group for group in property_groups if group["source_count"] <= 1]
+    display_sections = {
+        "cross_listed": [
+            _compact_property_line(int(group["rank"]), group["display"])
+            for group in cross_listed_groups
+        ],
+        "other_matches": [
+            _compact_property_line(int(group["rank"]), group["display"])
+            for group in other_groups
+        ],
+    }
     verification_candidates = [
         {
-            "rank": index + 1,
-            "listing_id": item["listing"]["id"],
-            "address": item["listing"]["address"],
+            "rank": group["rank"],
+            "listing_id": group["representative"]["listing"]["id"],
+            "address": group["representative"]["listing"]["address"],
         }
-        for index, item in enumerate(representative_payload[:3])
+        for group in property_groups[:3]
     ]
 
     if tool_context is not None:
         tool_context.state[_REQUIREMENTS_STATE_KEY] = _requirements_to_dict(req)
-        tool_context.state[_CANDIDATES_STATE_KEY] = ranked_payload
+        tool_context.state[_CANDIDATES_STATE_KEY] = candidate_payload
         tool_context.state[_VERIFIED_STATE_KEY] = {}
 
     return {
         "provider": provider_name,
         "data_source": data_source,
         "provider_search_performed": provider_search_performed,
+        "search_complete": search_complete,
+        "failed_sources": failed_sources,
         "refresh_reason": refresh_reason,
         "active_filters": _active_filters(req),
         "matched_count": len(property_groups),
         "posting_count": sum(len(group["postings"]) for group in property_groups),
         "property_groups": property_groups,
-        "property_rows": property_rows,
         "display_sections": display_sections,
-        "cross_listed_count": len(cross_listed_rows),
+        "cross_listed_count": len(cross_listed_groups),
         "top_10": representative_payload[:10],
         "top_5": representative_payload[:5],
         "soft_preferences_unverified": list(req.soft_preferences),
@@ -640,7 +688,8 @@ def get_listing_details(
             continue
         if str(listing_payload.get("id")) == listing_id:
             prior_listing = _listing_from_dict(listing_payload)
-            current_rank = index + 1
+            rank_value = candidate.get("current_search_rank")
+            current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else index + 1
             break
 
     merged = _merge_listing_detail(prior_listing, detail)
@@ -730,8 +779,9 @@ Answer format:
 16. Then show `## Other matches` and copy every precomputed line from
     display_sections.other_matches verbatim. Do not omit results.
 17. Each precomputed line is already complete and compact: short street/unit address,
-    known rent, known beds/baths, and human-readable linked sources. Do not expand a
-    line into bullets, subheadings, explanations, or repeated city/state/ZIP text.
+    then each linked source with that source's own known rent and beds/baths. Preserve
+    those source-to-fact mappings verbatim. Do not expand a line into bullets,
+    subheadings, explanations, or repeated city/state/ZIP text.
 18. Do not print `Unknown`; missing broad-search facts are intentionally omitted from
     the line. Do not expose raw scores, internal IDs, provider names, or internal
     source names such as `realtyapi-zillow`.

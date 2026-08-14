@@ -502,6 +502,8 @@ class RealtyApiMultiProvider(ListingProvider):
         self._apartments = apartments_provider or RealtyApiProvider(api_key=api_key)
         self._zillow = zillow_client or httpx.Client(base_url=ZILLOW_BASE_URL, timeout=30.0)
         self._realtor = realtor_client or httpx.Client(base_url=REALTOR_BASE_URL, timeout=30.0)
+        self._last_search_complete = True
+        self._last_failed_sources: tuple[str, ...] = ()
         headers = {"Accept": "application/json", "x-realtyapi-key": api_key.strip()}
         self._zillow.headers.update(headers)
         self._realtor.headers.update(headers)
@@ -579,6 +581,9 @@ class RealtyApiMultiProvider(ListingProvider):
                 failures.append((source, exc))
                 results.append([])
 
+        self._last_failed_sources = tuple(source for source, _ in failures)
+        self._last_search_complete = not failures
+
         if len(failures) == 3:
             summary = ", ".join(
                 f"{source}: {_safe_error(exc)}" for source, exc in failures
@@ -617,4 +622,6 @@ class RealtyApiMultiProvider(ListingProvider):
             "ok": True,
             "provider": "realtyapi-multi",
             "sources": ["apartments", "zillow", "realtor"],
+            "search_complete": self._last_search_complete,
+            "failed_sources": list(self._last_failed_sources),
         }

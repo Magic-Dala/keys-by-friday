@@ -1,3 +1,13 @@
+export interface SourcePosting {
+  id: string;
+  source?: string;
+  label?: string;
+  url?: string;
+  price?: number;
+  bedrooms?: number;
+  bathrooms?: number;
+}
+
 export interface Listing {
   id: string;
   title?: string;
@@ -8,6 +18,8 @@ export interface Listing {
   url?: string;
   score?: number;
   reason?: string;
+  rank?: number;
+  sourcePostings?: SourcePosting[];
 }
 
 export interface SearchRequest {
