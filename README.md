@@ -1,110 +1,186 @@
 # Keys by Friday
 
-An autonomous apartment-search agent that helps renters find the right home before the best listings disappear. It continuously evaluates listings against a renter's budget, commute, and lifestyle preferences; analyzes listing text, photos, floor plans, safety signals, and total costs; and surfaces the best evidence-backed options.
+AI rental search built with **Next.js + FastAPI + Google ADK**.
 
-With renter approval, Keys by Friday can draft landlord outreach and coordinate property viewings.
+If you just want to run the project, start here.
 
-Built for the [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/) in the **Taskmaster** track.
+## Quick Start
 
-## Why Keys by Friday?
+### 1. Install the prerequisites
 
-Apartment hunting is repetitive, fragmented, and time-sensitive. Renters must search multiple sources, compare inconsistent details, uncover fees and deposits, estimate commute times, inspect photos and floor plans, and move quickly on promising homes. A great listing can be gone before those steps are complete.
+You need:
 
-Keys by Friday is a renter-controlled search operator that turns that work into a transparent decision flow:
+- [Git](https://git-scm.com/)
+- [uv](https://docs.astral.sh/uv/)
+- [Node.js](https://nodejs.org/) 24 recommended
 
-- Learns hard constraints and lifestyle preferences from renter feedback.
-- Evaluates newly available or user-provided listings continuously.
-- Extracts structured listing details and supporting evidence from text, images, floor plans, and documents.
-- Calculates total monthly cost, commute trade-offs, and preference fit.
-- Rejects listings that fail non-negotiable requirements, then ranks the rest transparently.
-- Builds a searchable history of decisions, feedback, and agent actions.
-- Keeps all landlord outreach and calendar actions behind explicit renter approval.
+On Windows, install `uv` with:
 
-## MVP
-
-Our first end-to-end vertical slice will:
-
-1. Collect a renter's budget, target areas, move-in date, commute destination, and must-have constraints.
-2. Accept a sample apartment listing with text and an image or floor plan.
-3. Use Gemini to extract a validated, normalized listing record with evidence for each field.
-4. Apply deterministic hard constraints before calculating a preference score.
-5. Persist the evaluation and execution trace in Firestore.
-6. Show the recommendation, evidence, trade-offs, and missing information in a renter dashboard.
-7. Run the application on Google Cloud Run.
-
-Automated scraping, landlord messaging, calendar booking, payments, and lease signing are intentionally out of scope for this initial milestone.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    R["Renter"] --> W["Web application"]
-    W --> API["Cloud Run API"]
-    S["Cloud Scheduler"] --> P["Pub/Sub"]
-    P --> API
-    API --> ADK["Google ADK agent"]
-    ADK --> G["Gemini via Vertex AI"]
-    ADK --> F["Firestore state and memory"]
-    ADK --> M["Maps and commute tool"]
-    ADK --> A["Inquiry and calendar tools"]
-    A --> H["Human approval gate"]
-    API --> L["Cloud Logging and audit trail"]
+```powershell
+winget install --id=astral-sh.uv -e
 ```
 
-## Planned technology
+### 2. Initialize the project once
 
-- **Agent:** Python and Google Agent Development Kit (ADK)
-- **AI:** Gemini through Vertex AI
-- **API:** FastAPI on Cloud Run
-- **Web:** TypeScript and Next.js
-- **State and memory:** Firestore
-- **Background work:** Cloud Scheduler and Pub/Sub
-- **Location intelligence:** Google Maps Routes API
-- **Approved actions:** Gmail and Google Calendar APIs
-- **Operations:** Cloud Logging, IAM, Secret Manager, and budget alerts
+From the repository root:
 
-## Repository layout
+```powershell
+.\kbf init
+```
+
+The setup does the rest for you:
+
+- installs Python and FastAPI dependencies
+- installs frontend npm dependencies
+- shows where to create the Gemini and RealtyAPI keys
+- asks for the keys securely
+- creates the local `.env` files
+- installs the normal `kbf` command
+
+API keys:
+
+- Gemini: https://aistudio.google.com/app/apikey
+- RealtyAPI: https://www.realtyapi.io/
+
+### 3. Start the app
+
+Use either form:
+
+```powershell
+kbf start
+```
+
+or:
+
+```powershell
+.\kbf start
+```
+
+Then open **http://localhost:3000**.
+
+Useful local URLs:
+
+| Service | URL |
+|---|---|
+| Product UI | http://localhost:3000 |
+| API docs | http://localhost:8000/docs |
+| Backend health | http://localhost:8000/health |
+| ADK Web | http://localhost:8765 |
+
+Press `Ctrl+C` once to stop the frontend and backend.
+
+## CLI Commands
+
+After the first `init`, both the installed command and repository-local launcher are supported:
+
+| Task | Installed command | Repo-local command |
+|---|---|---|
+| Initialize / refresh setup | `kbf init` | `.\kbf init` |
+| Start the full product | `kbf start` | `.\kbf start` |
+| Start ADK Web only | `kbf agent` | `.\kbf agent` |
+
+For a completely fresh clone, use `.\kbf init` first. That command installs the normal `kbf` command for later use.
+
+If `kbf` is not found in the current terminal after initialization, open a new terminal or use the `.\kbf ...` form.
+
+## Agent-only Development
+
+To work directly with the Google ADK developer UI without starting the product frontend:
+
+```powershell
+kbf agent
+```
+
+or:
+
+```powershell
+.\kbf agent
+```
+
+Then open **http://localhost:8765**.
+
+This wraps:
+
+```powershell
+uv run adk web . --no-reload --port 8765
+```
+
+ADK Web is for Agent development and debugging. The normal product does **not** depend on port 8765.
+
+## Custom Ports
+
+If port `3000` or `8000` is already being used:
+
+```powershell
+kbf start --frontend-port 3001 --backend-port 8021
+```
+
+The repository-local form works too:
+
+```powershell
+.\kbf start --frontend-port 3001 --backend-port 8021
+```
+
+## How the Product Connects
 
 ```text
-keys-by-friday/
-├── agent/             # ADK agent, tools, prompts, and evaluations
-├── web/               # Renter dashboard and approval interface
-├── infra/             # Google Cloud deployment configuration
-├── data/              # Synthetic and permitted test listings
-├── tests/             # Unit, integration, and evaluation suites
-├── docs/              # Architecture decisions, diagrams, and demo assets
-├── .env.example       # Variable names only; never real credentials
-├── LICENSE
-├── NOTICE
-└── README.md
+Browser
+  ↓
+Next.js Frontend :3000
+  ↓  POST /api/chat
+FastAPI Backend :8000
+  ↓
+AgentService
+  ↓
+Google ADK Rental Agent
+  ↓
+Rental Provider
 ```
 
-## Development principles
+The frontend talks only to the FastAPI API. The backend owns the ADK adapter. Rental search, ranking, verification, and provider logic stay in `rental_agent/**`.
 
-- **Renter control:** External communications and calendar changes always require explicit approval.
-- **Evidence first:** Recommendations must cite the listing material that supports them.
-- **Deterministic guardrails:** Hard constraints cannot be overridden by model prose.
-- **Privacy by design:** Use synthetic demo data where possible; store secrets in Secret Manager and redact sensitive values from logs.
-- **Respectful data use:** Ingest listings only through permitted APIs, datasets, emails, uploads, or renter-provided URLs.
+## Team Ownership
 
-## Roadmap
+```text
+frontend/**      → Frontend
+backend/**       → HTTP API and Agent adapter
+rental_agent/**  → ADK Agent and rental decision logic
+docs/**          → Shared project references
+```
 
-- [ ] **M0 — Foundation:** repository, architecture decision record, GCP project, and secret handling
-- [ ] **M1 — Vertical slice:** preferences → listing extraction → constraint check → Firestore → dashboard
-- [ ] **M2 — Decision quality:** multiple listings, total-cost normalization, commute calculation, and evidence-backed ranking
-- [ ] **M3 — Agent loop:** scheduled ingestion, persistent memory, retries, and execution timeline
-- [ ] **M4 — Approved actions:** inquiry drafting, renter approval, landlord contact, and viewing coordination
-- [ ] **M5 — Submission:** evaluations, deployment proof, reproducible setup, and a four-minute demo
+The shared web contract is intentionally small:
 
-## Contributing
+```text
+GET  /health
+POST /api/chat
+```
 
-1. Create or claim a GitHub issue before beginning a work item.
-2. Branch from `main` using names such as `feature/listing-extraction` or `fix/idempotent-evaluation`.
-3. Keep pull requests focused and link them to their issue.
-4. Never commit `.env` files, API keys, OAuth tokens, or service-account credentials.
+Feature work should extend this baseline instead of creating a parallel architecture.
 
-Suggested commit prefixes: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `build:`, and `chore:`.
+## Before Opening a PR
 
-## License
+Run the same baseline checks used by CI:
 
-This project is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+```powershell
+uv run pytest backend/tests tests -q
+uv run python -m compileall backend rental_agent -q
+
+cd frontend
+npm run check
+```
+
+GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| `README.md` | Start here: setup, commands, and project overview |
+| `docs/architecture.md` | Stable system boundaries |
+| `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
+| `docs/development.md` | Manual service commands and contributor workflow |
+| `docs/agent.md` | Stable Agent authority and behavior rules |
+| `docs/status.md` | **Living:** current implementation status |
+| `docs/roadmap.md` | **Living:** priorities and next work |
+
+Stable documents change only when the actual setup, architecture, API contract, ownership, or Agent authority changes. Normal progress belongs in `docs/status.md` and `docs/roadmap.md`.
