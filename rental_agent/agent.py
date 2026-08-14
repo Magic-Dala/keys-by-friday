@@ -207,7 +207,7 @@ def search_listings(
 
     provider = get_provider()
     normalized = provider.search(req)
-    ranked = filter_and_rank(normalized, req, top_n=5)
+    ranked = filter_and_rank(normalized, req, top_n=10)
     ranked_payload = [item.to_dict() for item in ranked]
     verification_candidates = [
         {
@@ -226,7 +226,8 @@ def search_listings(
     return {
         "provider": provider.health()["provider"],
         "matched_count": len(ranked),
-        "top_5": ranked_payload,
+        "top_10": ranked_payload,
+        "top_5": ranked_payload[:5],
         "soft_preferences_unverified": list(req.soft_preferences),
         "effective_requirements": _requirements_to_dict(req),
         "memory_used": previous is not None and not reset_search,
@@ -319,32 +320,35 @@ Memory and search behavior:
    budget. Keep the current budget and add "prefer cheaper" as a soft preference.
    Treat quiet, newer, modern, near transit, or similar language as soft preferences.
 
-Verification behavior:
+Candidate-first behavior:
 5. For every initial or refined search, call search_listings exactly once.
-6. Before the final recommendation, call get_listing_details for every item in
-   verification_candidates (at most three). These detail calls may be parallel.
-   Do not verify ranks 4-5 unless the user specifically asks about one.
-7. A verified candidate with passes_current_hard_filters=false must not be
-   recommended as a verified match. Never override deterministic hard filters.
-8. Detail data is the preferred evidence for availability, pet policy, parking,
-   amenities, and year built. If a field remains unknown, say so instead of guessing.
+6. Do NOT automatically call get_listing_details after a broad search. First show
+   up to ten entries from top_10 so the user can review the candidate pool and
+   refine it conversationally.
+7. Keep broad-search results compact. For each candidate show rank, linked address,
+   rent, beds, baths when known, property type when known, and source. Unknown
+   fields must stay unknown; never invent them.
+8. Do not force source diversity in the displayed ten. Deterministic ranking decides
+   order; the multi-source provider supplies the candidate pool.
+9. When the user adds or changes requirements, call search_listings again with only
+   the changed fields and present the newly filtered/ranked top ten.
+10. Use get_listing_details only when the user asks about a specific listing, asks
+    to compare a small subset, or has narrowed the results enough that verification
+    is useful. Never verify all ten automatically.
+11. A verified candidate with passes_current_hard_filters=false must not be
+    presented as satisfying the current hard constraints.
 
-Final answer format:
-9. Start with one concise sentence summarizing the effective search. On a follow-up,
-   briefly state which previous constraints were kept and what changed.
-10. Use `## Best verified matches` then one section per verified result:
-    Use Markdown links in the literal form `[ADDRESS](SOURCE_URL)`.
-    `### N. [Address](source_url)`
-    `**$X/mo · X bed · X bath · Property type**`
-    `- **Why it fits:** ...`
-    `- **Verified details:** availability; pet/parking; a few relevant amenities`
-    `- **Tradeoffs:** ...`
-    `- **Source:** Apartments.com`
-11. If ranks 4-5 exist, put them under `## Other matches` and clearly label them
-    as not detail-verified yet. Do not show raw scores or internal scores.
-12. Use get_listing_details alone for a follow-up about one specific listing when
-    search requirements did not change.
-13. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
+Answer format:
+12. Start with one concise sentence summarizing the effective search. On a follow-up,
+    briefly state which previous constraints were kept and what changed.
+13. For a broad search/refinement, use `## Candidates` and list up to ten results.
+    Use Markdown links in the literal form `[ADDRESS](SOURCE_URL)`. Keep each item
+    concise: rank, linked address, rent, beds, baths if known, property type if
+    known, and source.
+14. Do not show raw scores or internal scores.
+15. For a specific verified listing or small comparison, you may use `**Why it fits:**`
+    and `**Tradeoffs:**`, but clearly distinguish verified facts from unknown fields.
+16. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
 """.strip(),
     tools=[search_listings, get_listing_details],
 )
