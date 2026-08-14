@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from itertools import zip_longest
 import re
-from typing import Any, Iterable
+import time
+from typing import Any, Callable, Iterable, TypeVar
 
 import httpx
 
@@ -458,6 +459,43 @@ def _safe_error(exc: Exception) -> str:
     return type(exc).__name__
 
 
+_T = TypeVar("_T")
+
+
+def _is_transient_credit_race(exc: Exception) -> bool:
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    response = exc.response
+    if response.status_code not in (401, 402):
+        return False
+    remaining = response.headers.get("X-Credits-Remaining")
+    try:
+        remaining_credits = int(remaining) if remaining is not None else 0
+    except ValueError:
+        return False
+    if remaining_credits <= 0:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("error") == "Not enough credits remaining"
+    )
+
+
+def _call_with_credit_race_retry(call: Callable[[], _T]) -> _T:
+    for attempt in range(3):
+        try:
+            return call()
+        except Exception as exc:
+            if attempt >= 2 or not _is_transient_credit_race(exc):
+                raise
+            time.sleep((2.0, 5.0)[attempt])
+    raise AssertionError("unreachable")
+
+
 class RealtyApiMultiProvider(ListingProvider):
     def __init__(
         self,
@@ -499,18 +537,6 @@ class RealtyApiMultiProvider(ListingProvider):
             params["otherAmenities"] = "On-site Parking"
 
         response = self._zillow.get("/search/byaddress", params=params)
-        if response.status_code == 402:
-            remaining = response.headers.get("X-Credits-Remaining")
-            try:
-                error = response.json().get("error")
-            except (ValueError, AttributeError):
-                error = None
-            try:
-                remaining_credits = int(remaining) if remaining is not None else 0
-            except ValueError:
-                remaining_credits = 0
-            if error == "Not enough credits remaining" and remaining_credits > 0:
-                response = self._zillow.get("/search/byaddress", params=params)
         response.raise_for_status()
         rows = _extract_rows(response.json())[: max(1, requirements.limit)]
         normalized_rows: list[Listing] = []
@@ -559,7 +585,7 @@ class RealtyApiMultiProvider(ListingProvider):
             ("realtor", lambda: self._search_realtor(per_source_requirements)),
         ):
             try:
-                results.append(search())
+                results.append(_call_with_credit_race_retry(search))
             except Exception as exc:
                 failures.append((source, exc))
                 results.append([])

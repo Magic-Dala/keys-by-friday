@@ -355,8 +355,10 @@ def test_realtor_full_state_name_normalizes_for_hard_filters():
     assert passes_hard_filters(result, requirements) is True
 
 
-def test_zillow_retries_once_when_402_conflicts_with_positive_credit_header():
+def test_zillow_retries_bounded_credit_race_until_success(monkeypatch):
     zillow_calls = 0
+    sleeps: list[float] = []
+    monkeypatch.setattr("rental_agent.providers.realtyapi_multi.time.sleep", sleeps.append)
 
     def apartments_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"searchResults": []})
@@ -364,7 +366,7 @@ def test_zillow_retries_once_when_402_conflicts_with_positive_credit_header():
     def zillow_handler(request: httpx.Request) -> httpx.Response:
         nonlocal zillow_calls
         zillow_calls += 1
-        if zillow_calls == 1:
+        if zillow_calls < 3:
             return httpx.Response(
                 402,
                 headers={"X-Credits-Remaining": "10"},
@@ -380,7 +382,8 @@ def test_zillow_retries_once_when_402_conflicts_with_positive_credit_header():
         SearchRequirements(city="Mountain View", state="CA", limit=3)
     )
 
-    assert zillow_calls == 2
+    assert zillow_calls == 3
+    assert sleeps == [2.0, 5.0]
     assert [listing.id for listing in results] == ["zillow:retry-ok"]
 
 
@@ -408,4 +411,36 @@ def test_zillow_does_not_retry_when_credits_are_actually_exhausted():
     )
 
     assert zillow_calls == 1
+    assert [listing.source for listing in results] == ["realtyapi-apartments"]
+
+
+def test_credit_race_retry_applies_to_apartments_source(monkeypatch):
+    apartment_calls = 0
+    sleeps: list[float] = []
+    monkeypatch.setattr("rental_agent.providers.realtyapi_multi.time.sleep", sleeps.append)
+
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal apartment_calls
+        apartment_calls += 1
+        if apartment_calls < 3:
+            return httpx.Response(
+                401,
+                headers={"X-Credits-Remaining": "9"},
+                json={"error": "Not enough credits remaining"},
+            )
+        return httpx.Response(200, json={"searchResults": [_apartments_row()]})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": []})
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    results = provider.search(
+        SearchRequirements(city="Mountain View", state="CA", limit=3)
+    )
+
+    assert apartment_calls == 3
+    assert sleeps == [2.0, 5.0]
     assert [listing.source for listing in results] == ["realtyapi-apartments"]
