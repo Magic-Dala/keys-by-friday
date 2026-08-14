@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from rental_agent.providers.base import ListingProvider
 from rental_agent.providers.mock import MockListingProvider
 from rental_agent.providers.realtyapi import RealtyApiProvider
+from rental_agent.providers.realtyapi_multi import RealtyApiMultiProvider
 
 load_dotenv()
 
@@ -23,7 +24,7 @@ def get_provider() -> ListingProvider:
             raise RuntimeError(
                 "LISTING_PROVIDER=realtyapi was requested, but REALTYAPI_API_KEY is missing."
             )
-        return RealtyApiProvider(api_key=api_key)
+        return RealtyApiMultiProvider(api_key=api_key)
     if mode == "rentcast":
         raise RuntimeError(
             "RentCast provider was replaced by RealtyAPI. Run scripts/setup_keys.ps1 "
@@ -34,4 +35,10 @@ def get_provider() -> ListingProvider:
     )
 
 
-__all__ = ["ListingProvider", "MockListingProvider", "RealtyApiProvider", "get_provider"]
+__all__ = [
+    "ListingProvider",
+    "MockListingProvider",
+    "RealtyApiProvider",
+    "RealtyApiMultiProvider",
+    "get_provider",
+]
