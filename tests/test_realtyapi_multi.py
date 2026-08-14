@@ -1,6 +1,7 @@
 import httpx
 
 from rental_agent.models import SearchRequirements
+from rental_agent.pipeline import passes_hard_filters
 from rental_agent.providers.realtyapi import REALTYAPI_BASE_URL, RealtyApiProvider
 from rental_agent.providers.realtyapi_multi import (
     REALTOR_BASE_URL,
@@ -263,3 +264,35 @@ def test_interleaving_prevents_first_source_from_consuming_limit():
         "realtyapi-zillow",
         "realtyapi-realtor",
     ]
+
+
+def test_realtor_full_state_name_normalizes_for_hard_filters():
+    row = _realtor_row("state-name")
+    address = row["location"]["address"]
+    address.pop("state_code")
+    address["state"] = "California"
+
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, json={"error": "not available"})
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": [row]})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    requirements = SearchRequirements(
+        city="Mountain View",
+        state="CA",
+        max_rent=4000,
+        min_bedrooms=2,
+        max_bedrooms=2,
+        limit=5,
+    )
+
+    result = provider.search(requirements)[0]
+
+    assert result.source == "realtyapi-realtor"
+    assert result.state == "CA"
+    assert passes_hard_filters(result, requirements) is True

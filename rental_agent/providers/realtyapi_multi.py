@@ -152,6 +152,9 @@ def _address_parts(
         city = city or requirements.city
         state = state or requirements.state
 
+    if state and state.casefold().strip() == "california":
+        state = "CA"
+
     return address, city or "", state or "", zip_code
 
 
