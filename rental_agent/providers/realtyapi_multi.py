@@ -257,6 +257,8 @@ def _source_url(raw: dict[str, Any], *, provider: str) -> str | None:
     value = _first_text(
         raw,
         "detailUrl",
+        "zillowURL",
+        "hdpUrl",
         "propertyUrl",
         "listingUrl",
         "sourceUrl",
@@ -334,6 +336,25 @@ def normalize_zillow_listing(
     if requirements is not None and requirements.parking_required:
         parking_available = True
 
+    bathrooms = _first_number(raw, "bathrooms", "baths", "resoFacts.bathrooms")
+    bathrooms_min_evidence = None
+    if (
+        bathrooms is None
+        and requirements is not None
+        and requirements.min_bathrooms is not None
+        and _zillow_bathrooms(requirements.min_bathrooms) is not None
+    ):
+        # Zillow applied this explicit minimum-bathroom search filter upstream.
+        # Keep it as a lower-bound evidence field rather than pretending it is
+        # the property's exact bathroom count.
+        bathrooms_min_evidence = float(requirements.min_bathrooms)
+
+    source_url = _source_url(raw, provider="zillow")
+    if not source_url:
+        # RealtyAPI Zillow search rows currently expose zpid but no URL. The
+        # Zillow detail endpoint exposes this same canonical zpid URL form.
+        source_url = f"https://www.zillow.com/homedetails/{raw_id}_zpid/"
+
     year_built = _first_number(raw, "yearBuilt", "resoFacts.yearBuilt")
     return Listing(
         id=f"zillow:{raw_id}",
@@ -343,14 +364,15 @@ def normalize_zillow_listing(
         zip_code=zip_code,
         rent=rent,
         bedrooms=bedrooms,
-        bathrooms=_first_number(raw, "bathrooms", "baths", "resoFacts.bathrooms"),
+        bathrooms=bathrooms,
+        bathrooms_min_evidence=bathrooms_min_evidence,
         property_type=_first_text(raw, "homeType", "propertyType", "resoFacts.homeType"),
         square_footage=_first_number(raw, "livingArea", "livingAreaValue", "sqft", "resoFacts.livingArea"),
         listed_date=_parse_datetime(_first(raw, "datePosted", "listingDate", "listedDate")),
         last_seen_date=_parse_datetime(_first(raw, "lastUpdated", "updatedAt")),
         pets_allowed=pets_allowed,
         parking_available=parking_available,
-        source_url=_source_url(raw, provider="zillow"),
+        source_url=source_url,
         source="realtyapi-zillow",
         property_name=_first_text(raw, "buildingName", "propertyName", "name"),
         year_built=int(year_built) if year_built is not None else None,

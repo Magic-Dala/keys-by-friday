@@ -14,9 +14,18 @@ def passes_hard_filters(listing: Listing, req: SearchRequirements) -> bool:
         return False
     if req.max_bedrooms is not None and (listing.bedrooms is None or listing.bedrooms > req.max_bedrooms):
         return False
-    if req.min_bathrooms is not None and (listing.bathrooms is None or listing.bathrooms < req.min_bathrooms):
+    bathroom_floor = (
+        listing.bathrooms
+        if listing.bathrooms is not None
+        else listing.bathrooms_min_evidence
+    )
+    if req.min_bathrooms is not None and (
+        bathroom_floor is None or bathroom_floor < req.min_bathrooms
+    ):
         return False
-    if req.max_bathrooms is not None and (listing.bathrooms is None or listing.bathrooms > req.max_bathrooms):
+    if req.max_bathrooms is not None and (
+        listing.bathrooms is None or listing.bathrooms > req.max_bathrooms
+    ):
         return False
     if req.pets_required and listing.pets_allowed is not True:
         return False

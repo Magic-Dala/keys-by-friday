@@ -46,6 +46,7 @@ class Listing:
     pet_policy: str | None = None
     parking_policy: str | None = None
     detail_verified: bool = False
+    bathrooms_min_evidence: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

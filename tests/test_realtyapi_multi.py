@@ -179,15 +179,15 @@ def test_zillow_search_unwraps_live_property_envelope_and_uses_unit_evidence():
         return httpx.Response(200, json={"searchResults": []})
 
     provider = _provider(apartments_handler, zillow_handler, realtor_handler)
-    results = provider.search(
-        SearchRequirements(
-            city="Mountain View",
-            state="CA",
-            max_rent=4000,
-            min_bedrooms=2,
-            limit=5,
-        )
+    requirements = SearchRequirements(
+        city="Mountain View",
+        state="CA",
+        max_rent=4000,
+        min_bedrooms=2,
+        min_bathrooms=2,
+        limit=5,
     )
+    results = provider.search(requirements)
 
     assert len(results) == 1
     listing = results[0]
@@ -199,6 +199,9 @@ def test_zillow_search_unwraps_live_property_envelope_and_uses_unit_evidence():
     assert listing.rent == 3795
     assert listing.bedrooms == 2
     assert listing.bathrooms is None
+    assert listing.bathrooms_min_evidence == 2
+    assert listing.source_url == "https://www.zillow.com/homedetails/461662543_zpid/"
+    assert passes_hard_filters(listing, requirements) is True
 
 def test_one_source_failure_does_not_fail_search():
     def apartments_handler(request: httpx.Request) -> httpx.Response:

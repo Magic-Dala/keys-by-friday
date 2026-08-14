@@ -227,6 +227,52 @@ def _display_rent(values: list[float | None]) -> str:
     return f"${known[0]:,.0f}–${known[-1]:,.0f}"
 
 
+def _display_bathrooms(listings: list[dict[str, object]]) -> str:
+    exact = [listing.get("bathrooms") for listing in listings]
+    known_exact = [float(value) for value in exact if value is not None]
+    if known_exact:
+        return _display_number(known_exact)
+    minimums = [
+        float(listing["bathrooms_min_evidence"])
+        for listing in listings
+        if listing.get("bathrooms_min_evidence") is not None
+    ]
+    if minimums:
+        return f"{max(minimums):g}+"
+    return "—"
+
+
+def _bound_label(
+    minimum: float | None, maximum: float | None, unit: str
+) -> str | None:
+    if minimum is not None and maximum is not None:
+        if float(minimum) == float(maximum):
+            return f"{minimum:g} {unit}"
+        return f"{minimum:g}–{maximum:g} {unit}"
+    if minimum is not None:
+        return f"{minimum:g}+ {unit}"
+    if maximum is not None:
+        return f"≤{maximum:g} {unit}"
+    return None
+
+
+def _active_filters(req: SearchRequirements) -> str:
+    parts = [f"{req.city}, {req.state}"]
+    if req.max_rent is not None:
+        parts.append(f"≤${req.max_rent:,.0f}")
+    beds = _bound_label(req.min_bedrooms, req.max_bedrooms, "bd")
+    baths = _bound_label(req.min_bathrooms, req.max_bathrooms, "ba")
+    if beds:
+        parts.append(beds)
+    if baths:
+        parts.append(baths)
+    if req.parking_required:
+        parts.append("parking")
+    if req.pets_required:
+        parts.append("pet-friendly")
+    return " · ".join(parts)
+
+
 def _short_address(address: str) -> str:
     return address.split(",", 1)[0].strip() or address
 
@@ -288,7 +334,7 @@ def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
             "full_address": representative["address"],
             "rent": _display_rent([listing.get("rent") for listing in listings]),
             "beds": _display_number([listing.get("bedrooms") for listing in listings]),
-            "baths": _display_number([listing.get("bathrooms") for listing in listings]),
+            "baths": _display_bathrooms(listings),
             "sources": [
                 {
                     "label": posting["source_label"],
@@ -384,6 +430,7 @@ def search_listings(
 
     return {
         "provider": provider.health()["provider"],
+        "active_filters": _active_filters(req),
         "matched_count": len(property_groups),
         "posting_count": sum(len(group["postings"]) for group in property_groups),
         "property_groups": property_groups,
@@ -503,8 +550,11 @@ Candidate-first behavior:
     as satisfying the current hard constraints.
 
 Answer format:
-13. Start with exactly one short summary line using matched_count, posting_count, and
-    cross_listed_count, for example: `25 properties · 27 postings · 1 cross-listed`.
+13. Start every broad-search/refinement answer with exactly these two short lines:
+    `**Active filters:** {active_filters}`
+    then counts using matched_count, posting_count, and cross_listed_count, for example:
+    `25 properties · 27 postings · 1 cross-listed`. Copy active_filters exactly from
+    the tool result so the user can verify which remembered constraints are active.
 14. Do NOT use a Markdown table for broad search results.
 15. If display_sections.cross_listed is non-empty, show `## Cross-listed` first and
     copy every precomputed line from that list verbatim. These are the same physical

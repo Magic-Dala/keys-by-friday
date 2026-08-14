@@ -17,6 +17,7 @@ def test_agent_has_only_two_listing_tools():
 def test_agent_output_contract_requires_compact_grouped_lists():
     instruction = str(root_agent.instruction)
     assert "display_sections.cross_listed" in instruction
+    assert "**Active filters:** {active_filters}" in instruction
     assert "## Cross-listed" in instruction
     assert "## Other matches" in instruction
     assert "Do NOT use a Markdown table" in instruction
@@ -170,3 +171,43 @@ def test_real_mode_without_realtyapi_key_fails_clearly(monkeypatch):
         get_provider()
 
     get_provider.cache_clear()
+
+
+def test_query_backed_bathroom_minimum_displays_as_lower_bound(monkeypatch):
+    class ZillowEvidenceProvider:
+        def search(self, requirements):
+            return [
+                Listing(
+                    id="zillow:123",
+                    address="123 Test Ave",
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code="94040",
+                    rent=3500,
+                    bedrooms=2,
+                    bathrooms=None,
+                    source="realtyapi-zillow",
+                    source_url="https://www.zillow.com/homedetails/123_zpid/",
+                    bathrooms_min_evidence=2,
+                )
+            ]
+
+        def get_listing(self, listing_id):
+            raise AssertionError("detail lookup should not be needed")
+
+        def health(self):
+            return {"ok": True, "provider": "zillow-evidence"}
+
+    monkeypatch.setattr(agent_module, "get_provider", lambda: ZillowEvidenceProvider())
+    result = search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        min_bathrooms=2,
+    )
+
+    assert result["matched_count"] == 1
+    assert result["property_rows"][0]["baths"] == "2+"
+    assert "[Zillow](https://www.zillow.com/homedetails/123_zpid/)" in (
+        result["property_rows"][0]["sources"]
+    )

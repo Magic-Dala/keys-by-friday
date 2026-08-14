@@ -108,3 +108,35 @@ def test_detail_verification_merges_search_evidence_and_rechecks_hard_filters(mo
     assert listing["detail_verified"] is True
     assert verification["current_search_rank"] == 1
     assert verification["passes_current_hard_filters"] is True
+
+
+def test_session_memory_accumulates_bath_parking_pet_and_budget(monkeypatch):
+    monkeypatch.setenv("LISTING_PROVIDER", "mock")
+    get_provider.cache_clear()
+    context = SimpleNamespace(state={})
+
+    search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        min_bathrooms=2,
+        tool_context=context,
+    )
+    search_listings(parking_required=True, tool_context=context)
+    search_listings(pets_required=True, tool_context=context)
+    final = search_listings(max_rent=3600, tool_context=context)
+
+    req = final["effective_requirements"]
+    assert final["memory_used"] is True
+    assert req["city"] == "Mountain View"
+    assert req["state"] == "CA"
+    assert req["max_rent"] == 3600
+    assert req["min_bedrooms"] == 2
+    assert req["min_bathrooms"] == 2
+    assert req["parking_required"] is True
+    assert req["pets_required"] is True
+    assert final["active_filters"] == (
+        "Mountain View, CA · ≤$3,600 · 2+ bd · 2+ ba · parking · pet-friendly"
+    )
+
+    get_provider.cache_clear()
