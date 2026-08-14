@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 
+import { AgentMessage } from "@/components/agent-message";
 import { Brand } from "@/components/brand";
 import { ComparisonPanel } from "@/components/comparison-panel";
 import {
@@ -266,7 +267,11 @@ export function RentalSearch() {
                 {turns.map((turn) => (
                   <article className={`turn ${turn.role}`} key={turn.id}>
                     <span>{turn.role === "user" ? "You" : "Keys"}</span>
-                    <p>{turn.text}</p>
+                    {turn.role === "agent" ? (
+                      <AgentMessage>{turn.text}</AgentMessage>
+                    ) : (
+                      <p>{turn.text}</p>
+                    )}
                   </article>
                 ))}
                 {loading ? (
