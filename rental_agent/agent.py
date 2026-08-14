@@ -551,10 +551,11 @@ Candidate-first behavior:
 
 Answer format:
 13. Start every broad-search/refinement answer with exactly these two short lines:
-    `**Active filters:** {active_filters}`
-    then counts using matched_count, posting_count, and cross_listed_count, for example:
-    `25 properties · 27 postings · 1 cross-listed`. Copy active_filters exactly from
-    the tool result so the user can verify which remembered constraints are active.
+    Start with `**Active filters:** ` followed by the exact `active_filters` value from
+    the latest search_listings tool result. Then show counts using matched_count,
+    posting_count, and cross_listed_count, for example:
+    `25 properties · 27 postings · 1 cross-listed`. Do not treat active_filters as
+    an ADK context variable; read it only from the tool result.
 14. Do NOT use a Markdown table for broad search results.
 15. If display_sections.cross_listed is non-empty, show `## Cross-listed` first and
     copy every precomputed line from that list verbatim. These are the same physical

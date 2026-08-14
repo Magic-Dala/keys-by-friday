@@ -17,7 +17,8 @@ def test_agent_has_only_two_listing_tools():
 def test_agent_output_contract_requires_compact_grouped_lists():
     instruction = str(root_agent.instruction)
     assert "display_sections.cross_listed" in instruction
-    assert "**Active filters:** {active_filters}" in instruction
+    assert "**Active filters:** " in instruction
+    assert "{active_filters}" not in instruction
     assert "## Cross-listed" in instruction
     assert "## Other matches" in instruction
     assert "Do NOT use a Markdown table" in instruction
