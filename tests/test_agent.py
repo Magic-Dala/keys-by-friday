@@ -14,13 +14,14 @@ def test_agent_has_only_two_listing_tools():
     ]
 
 
-def test_agent_output_contract_requires_links_and_markdown():
+def test_agent_output_contract_requires_compact_grouped_lists():
     instruction = str(root_agent.instruction)
-    assert "property_rows" in instruction
-    assert "| # | Property | Rent | Beds | Baths | Sources |" in instruction
-    assert "[Zillow](url)" in instruction
-    assert "internal names" in instruction
-    assert "Do not show raw scores" in instruction
+    assert "display_sections.cross_listed" in instruction
+    assert "## Cross-listed" in instruction
+    assert "## Other matches" in instruction
+    assert "Do NOT use a Markdown table" in instruction
+    assert "Do not print `Unknown`" in instruction
+    assert "internal IDs" in instruction
     assert "Do NOT automatically call get_listing_details" in instruction
 
 
@@ -143,12 +144,21 @@ def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_sepa
     }
     assert groups[1]["source_count"] == 2
     rows = result["property_rows"]
-    assert rows[0]["address"] == "100 Castro Street, Mountain View, CA 94041"
+    assert rows[0]["address"] == "100 Castro Street"
+    assert rows[0]["full_address"] == "100 Castro Street, Mountain View, CA 94041"
     assert rows[0]["beds"] == "2"
     assert rows[0]["baths"] == "2"
     assert "[Apartments.com](https://example.test/apt-main)" in rows[0]["sources"]
     assert "[Zillow](https://example.test/z-main)" in rows[0]["sources"]
     assert "[Realtor.com](https://example.test/r-main)" in rows[0]["sources"]
+    sections = result["display_sections"]
+    assert result["cross_listed_count"] == 2
+    assert sections["cross_listed"][0].startswith("1. **100 Castro Street** — $3,800 · 2 bd · 2 ba")
+    assert "Apartments.com" in sections["cross_listed"][0]
+    assert "Zillow" in sections["cross_listed"][0]
+    assert "Realtor.com" in sections["cross_listed"][0]
+    assert sections["cross_listed"][1].startswith("2. **100 Castro St Apt 2** — $3,900 · 2 bd · 2 ba")
+    assert sections["other_matches"] == []
 
 
 def test_real_mode_without_realtyapi_key_fails_clearly(monkeypatch):

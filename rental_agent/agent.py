@@ -211,7 +211,7 @@ def _source_label(source: str) -> str:
 def _display_number(values: list[float | None]) -> str:
     known = sorted({float(value) for value in values if value is not None})
     if not known:
-        return "Unknown"
+        return "—"
     if len(known) == 1:
         value = known[0]
         return f"{value:g}"
@@ -221,10 +221,32 @@ def _display_number(values: list[float | None]) -> str:
 def _display_rent(values: list[float | None]) -> str:
     known = sorted({float(value) for value in values if value is not None})
     if not known:
-        return "Unknown"
+        return "—"
     if len(known) == 1:
         return f"${known[0]:,.0f}"
     return f"${known[0]:,.0f}–${known[-1]:,.0f}"
+
+
+def _short_address(address: str) -> str:
+    return address.split(",", 1)[0].strip() or address
+
+
+def _compact_property_line(rank: int, display: dict[str, object]) -> str:
+    facts: list[str] = []
+    rent = str(display.get("rent") or "—")
+    beds = str(display.get("beds") or "—")
+    baths = str(display.get("baths") or "—")
+    if rent != "—":
+        facts.append(rent)
+    if beds != "—":
+        facts.append(f"{beds} bd")
+    if baths != "—":
+        facts.append(f"{baths} ba")
+    sources = str(display.get("sources") or "")
+    if sources:
+        facts.append(sources)
+    suffix = " · ".join(facts)
+    return f"{rank}. **{display['address']}**" + (f" — {suffix}" if suffix else "")
 
 
 def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
@@ -262,7 +284,8 @@ def _group_ranked_properties(ranked: list[object]) -> list[dict[str, object]]:
         group["rank"] = rank
         group["source_count"] = len(group["sources"])
         group["display"] = {
-            "address": representative["address"],
+            "address": _short_address(representative["address"]),
+            "full_address": representative["address"],
             "rent": _display_rent([listing.get("rent") for listing in listings]),
             "beds": _display_number([listing.get("bedrooms") for listing in listings]),
             "baths": _display_number([listing.get("bathrooms") for listing in listings]),
@@ -333,7 +356,18 @@ def search_listings(
             f"[{source['label']}]({source['url']})" if source.get("url") else source["label"]
             for source in group["display"]["sources"]
         )
-        property_rows.append(display | {"rank": group["rank"]})
+        property_rows.append(display | {"rank": group["rank"], "source_count": group["source_count"]})
+
+    cross_listed_rows = [row for row in property_rows if row["source_count"] > 1]
+    other_rows = [row for row in property_rows if row["source_count"] <= 1]
+    display_sections = {"cross_listed": [], "other_matches": []}
+    display_rank = 1
+    for row in cross_listed_rows:
+        display_sections["cross_listed"].append(_compact_property_line(display_rank, row))
+        display_rank += 1
+    for row in other_rows:
+        display_sections["other_matches"].append(_compact_property_line(display_rank, row))
+        display_rank += 1
     verification_candidates = [
         {
             "rank": index + 1,
@@ -354,6 +388,8 @@ def search_listings(
         "posting_count": sum(len(group["postings"]) for group in property_groups),
         "property_groups": property_groups,
         "property_rows": property_rows,
+        "display_sections": display_sections,
+        "cross_listed_count": len(cross_listed_rows),
         "top_10": representative_payload[:10],
         "top_5": representative_payload[:5],
         "soft_preferences_unverified": list(req.soft_preferences),
@@ -467,21 +503,23 @@ Candidate-first behavior:
     as satisfying the current hard constraints.
 
 Answer format:
-13. Start with one concise sentence summarizing the effective search and report the
-    unique property count (matched_count). Do not narrate every row.
-14. For a broad search/refinement, render every entry in property_rows in ONE compact
-    Markdown table with exactly these columns:
-    `| # | Property | Rent | Beds | Baths | Sources |`
-15. Use the precomputed property_rows display values exactly. The `sources` field is
-    already a Markdown string such as `[Zillow](url) · [Apartments.com](url)`. Copy it
-    into the Sources cell; do not rewrite source names or expose internal names such as
-    `realtyapi-zillow` or `realtyapi-realtor`.
-16. Do not create a separate heading or bullet list for each property. Keep the full
-    result set scannable in one table even when there are 20+ properties.
-17. If multiple sources disagree on rent/beds/baths, the precomputed display value may
-    be a range. Do not choose one source as truth during a broad search.
-18. Do not show raw scores, internal IDs, provider names, or internal source names.
-19. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
+13. Start with exactly one short summary line using matched_count, posting_count, and
+    cross_listed_count, for example: `25 properties · 27 postings · 1 cross-listed`.
+14. Do NOT use a Markdown table for broad search results.
+15. If display_sections.cross_listed is non-empty, show `## Cross-listed` first and
+    copy every precomputed line from that list verbatim. These are the same physical
+    property/unit found on multiple sites and are the highest-value discovery results.
+16. Then show `## Other matches` and copy every precomputed line from
+    display_sections.other_matches verbatim. Do not omit results.
+17. Each precomputed line is already complete and compact: short street/unit address,
+    known rent, known beds/baths, and human-readable linked sources. Do not expand a
+    line into bullets, subheadings, explanations, or repeated city/state/ZIP text.
+18. Do not print `Unknown`; missing broad-search facts are intentionally omitted from
+    the line. Do not expose raw scores, internal IDs, provider names, or internal
+    source names such as `realtyapi-zillow`.
+19. After the result list, add only one brief sentence inviting the user to refine by
+    budget, beds/baths, parking, pets, source, or a specific property.
+20. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
 
 """.strip(),
     tools=[search_listings, get_listing_details],
