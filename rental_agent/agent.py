@@ -401,6 +401,24 @@ def _cached_listings(value: object) -> list[Listing]:
     return result
 
 
+def _cached_candidate_listings(value: object) -> list[Listing]:
+    """Recover prior ranked candidates from sessions created before raw caching."""
+    if not isinstance(value, list):
+        return []
+    result: list[Listing] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        listing_payload = item.get("listing")
+        if not isinstance(listing_payload, dict):
+            continue
+        try:
+            result.append(_listing_from_dict(listing_payload))
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def search_listings(
     city: str = "",
     state: str = "",
@@ -449,6 +467,7 @@ def search_listings(
     cached_scope = None
     cached_raw: list[Listing] = []
     cached_provider = None
+    migrated_candidate_cache = False
     if tool_context is not None:
         cached_scope = _requirements_from_dict(
             tool_context.state.get(_CACHE_SCOPE_STATE_KEY)
@@ -456,6 +475,25 @@ def search_listings(
         cached_raw = _cached_listings(tool_context.state.get(_RAW_CACHE_STATE_KEY))
         provider_value = tool_context.state.get(_CACHE_PROVIDER_STATE_KEY)
         cached_provider = str(provider_value) if provider_value else None
+
+        # Sessions created before raw-cache support still have the full ranked
+        # candidate set from their previous search. For narrower refinements,
+        # that set is safe to use as a bounded fallback cache and avoids burning
+        # another multi-source RealtyAPI search just to migrate the session.
+        if cached_scope is None and previous is not None and not reset_search:
+            legacy_candidates = _cached_candidate_listings(
+                tool_context.state.get(_CANDIDATES_STATE_KEY)
+            )
+            if legacy_candidates:
+                cached_scope = previous
+                cached_raw = legacy_candidates
+                migrated_candidate_cache = True
+                if cached_provider is None:
+                    cached_provider = (
+                        "realtyapi-multi"
+                        if any(item.source.startswith("realtyapi-") for item in legacy_candidates)
+                        else "session-cache"
+                    )
 
     use_cache = (
         not reset_search
@@ -501,10 +539,19 @@ def search_listings(
             tool_context.state[_CACHE_PROVIDER_STATE_KEY] = provider_name
 
     data_source = (
-        "session_cache"
-        if not provider_search_performed
-        else ("realtyapi" if provider_name.startswith("realtyapi") else provider_name)
+        "session_cache_migrated"
+        if migrated_candidate_cache and not provider_search_performed
+        else (
+            "session_cache"
+            if not provider_search_performed
+            else ("realtyapi" if provider_name.startswith("realtyapi") else provider_name)
+        )
     )
+
+    if migrated_candidate_cache and tool_context is not None and not provider_search_performed:
+        tool_context.state[_RAW_CACHE_STATE_KEY] = [item.to_dict() for item in cached_raw]
+        tool_context.state[_CACHE_SCOPE_STATE_KEY] = _requirements_to_dict(cached_scope)
+        tool_context.state[_CACHE_PROVIDER_STATE_KEY] = provider_name
     ranked_payload = [item.to_dict() for item in ranked]
     property_groups = _group_ranked_properties(ranked)
     representative_payload = [group["representative"] for group in property_groups]

@@ -225,3 +225,48 @@ def test_broadened_scope_and_force_refresh_call_provider(monkeypatch):
     refreshed = search_listings(force_refresh=True, tool_context=context)
     assert provider.search_calls == 3
     assert refreshed["refresh_reason"] == "force_refresh"
+
+
+def test_legacy_session_candidates_avoid_provider_search_for_narrower_refinement(monkeypatch):
+    class CountingProvider(MockListingProvider):
+        def __init__(self):
+            super().__init__()
+            self.search_calls = 0
+
+        def search(self, requirements):
+            self.search_calls += 1
+            return super().search(requirements)
+
+        def health(self):
+            return {"ok": True, "provider": "realtyapi-multi"}
+
+    provider = CountingProvider()
+    monkeypatch.setattr(agent_module, "get_provider", lambda: provider)
+    context = SimpleNamespace(state={})
+
+    search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        min_bathrooms=2,
+        tool_context=context,
+    )
+    search_listings(parking_required=True, tool_context=context)
+    assert provider.search_calls == 1
+
+    # Simulate a session created before raw-cache support: requirements and the
+    # previous complete ranked candidates survive, but the new cache keys do not.
+    context.state.pop(agent_module._RAW_CACHE_STATE_KEY, None)
+    context.state.pop(agent_module._CACHE_SCOPE_STATE_KEY, None)
+    context.state.pop(agent_module._CACHE_PROVIDER_STATE_KEY, None)
+
+    pets = search_listings(pets_required=True, tool_context=context)
+
+    assert provider.search_calls == 1
+    assert pets["provider_search_performed"] is False
+    assert pets["data_source"] == "session_cache_migrated"
+    assert pets["matched_count"] > 0
+    assert pets["effective_requirements"]["parking_required"] is True
+    assert pets["effective_requirements"]["pets_required"] is True
+    assert agent_module._RAW_CACHE_STATE_KEY in context.state
+    assert agent_module._CACHE_SCOPE_STATE_KEY in context.state
