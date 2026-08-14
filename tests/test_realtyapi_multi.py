@@ -26,10 +26,25 @@ def _apartments_row(
             "city": "Mountain View",
             "state": "CA",
             "postalCode": "94041",
+            "countryCode": "US",
         },
         "rentRange": rent,
         "bedRange": "2 Beds",
         "baths": 2,
+        "latitude": 37.3861,
+        "longitude": -122.0839,
+        "primaryImage": "https://img.example.test/apartment.jpg",
+        "photos": [{"url": "https://img.example.test/apartment.jpg"}],
+        "phone": "(650) 555-0100",
+        "rating": 4,
+        "threeDScanUrl": "https://example.test/3d/apt-1",
+        "hasAvailabilities": True,
+        "isMultifamily": True,
+        "attachmentCount": 22,
+        "specialties": ["Corporate", "Short Term"],
+        "propertyManager": {"name": "Example Residential", "companyId": 12345},
+        "hasLeadEmail": True,
+        "rentDeals": 1,
     }
 
 
@@ -48,6 +63,10 @@ def _zillow_row(
         "bedrooms": 2,
         "bathrooms": 2,
         "livingArea": 980,
+        "latitude": 37.3901,
+        "longitude": -122.0812,
+        "imgSrc": "https://img.example.test/zillow.jpg",
+        "daysOnZillow": 4,
         "detailUrl": f"/homedetails/{zpid}_zpid/",
     }
 
@@ -68,7 +87,19 @@ def _realtor_row(
             }
         },
         "price": rent,
+        "listing_id": f"listing-{property_id}",
+        "days_on_market": 7,
         "description": {"beds": 2, "baths": 2, "sqft": 950},
+        "primary_photo": {"href": "https://img.example.test/realtor.jpg"},
+        "location": {
+            "address": {
+                "line": address,
+                "city": "Mountain View",
+                "state_code": "CA",
+                "postal_code": "94041",
+                "coordinate": {"lat": 37.3942, "lon": -122.0781},
+            }
+        },
         "href": f"https://www.realtor.com/realestateandhomes-detail/{property_id}",
     }
 
@@ -136,11 +167,46 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     zillow = next(item for item in results if item.source == "realtyapi-zillow")
     realtor = next(item for item in results if item.source == "realtyapi-realtor")
     assert zillow.id == "zillow:2001"
+    assert zillow.source_listing_id == "2001"
+    assert zillow.latitude == 37.3901
+    assert zillow.longitude == -122.0812
+    assert zillow.primary_image_url == "https://img.example.test/zillow.jpg"
+    assert zillow.days_on_market == 4
     assert zillow.pets_allowed is True
     assert zillow.parking_available is True
     assert realtor.id == "realtor:3001"
+    assert realtor.source_listing_id == "listing-3001"
+    assert realtor.latitude == 37.3942
+    assert realtor.longitude == -122.0781
+    assert realtor.primary_image_url == "https://img.example.test/realtor.jpg"
+    assert realtor.days_on_market == 7
     assert realtor.pets_allowed is True
     assert realtor.parking_available is None
+
+    apartments = next(item for item in results if item.source == "realtyapi-apartments")
+    assert apartments.source_listing_id == "apt-1"
+    assert apartments.country_code == "US"
+    assert apartments.latitude == 37.3861
+    assert apartments.longitude == -122.0839
+    assert apartments.primary_image_url == "https://img.example.test/apartment.jpg"
+    assert apartments.bedrooms_min == 2
+    assert apartments.bedrooms_max == 2
+    assert apartments.phone == "(650) 555-0100"
+    assert apartments.rating == 4
+    assert apartments.virtual_tour_url == "https://example.test/3d/apt-1"
+    assert apartments.has_availability is True
+    assert apartments.is_multifamily is True
+    assert apartments.attachment_count == 22
+    assert apartments.specialties == ("Corporate", "Short Term")
+    assert apartments.property_manager_name == "Example Residential"
+    assert apartments.property_manager_company_id == "12345"
+    assert apartments.has_lead_email is True
+    assert apartments.rent_deals_count == 1
+
+    # These booleans were not reported in the row; they are guaranteed by the
+    # search filters and must be marked as query-backed rather than detail facts.
+    assert "pets_allowed" in apartments.query_backed_fields
+    assert "parking_available" in apartments.query_backed_fields
 
 
 
@@ -202,6 +268,43 @@ def test_zillow_search_unwraps_live_property_envelope_and_uses_unit_evidence():
     assert listing.bathrooms_min_evidence == 2
     assert listing.source_url == "https://www.zillow.com/homedetails/461662543_zpid/"
     assert passes_hard_filters(listing, requirements) is True
+    assert "bathrooms_min_evidence" in listing.query_backed_fields
+
+
+def test_explicit_provider_policy_is_not_overwritten_by_query_evidence():
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        row = _zillow_row("explicit-no-pets")
+        row["petsAllowed"] = False
+        row["hasGarage"] = False
+        return httpx.Response(200, json={"results": [row]})
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        row = _realtor_row("explicit-no-pets")
+        row["petsAllowed"] = False
+        return httpx.Response(200, json={"searchResults": [row]})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    results = provider.search(
+        SearchRequirements(
+            city="Mountain View",
+            state="CA",
+            pets_required=True,
+            parking_required=True,
+            limit=5,
+        )
+    )
+
+    zillow = next(item for item in results if item.source == "realtyapi-zillow")
+    realtor = next(item for item in results if item.source == "realtyapi-realtor")
+    assert zillow.pets_allowed is False
+    assert zillow.parking_available is False
+    assert "pets_allowed" not in zillow.query_backed_fields
+    assert "parking_available" not in zillow.query_backed_fields
+    assert realtor.pets_allowed is False
+    assert "pets_allowed" not in realtor.query_backed_fields
 
 def test_one_source_failure_does_not_fail_search():
     def apartments_handler(request: httpx.Request) -> httpx.Response:

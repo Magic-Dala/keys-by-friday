@@ -54,6 +54,28 @@ def _first_text(raw: dict[str, Any], *paths: str) -> str | None:
     return None
 
 
+def _primary_image_url(raw: dict[str, Any], *paths: str) -> str | None:
+    for path in paths:
+        value = _nested(raw, path)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+        if isinstance(value, dict):
+            for key in ("url", "href", "src"):
+                nested = value.get(key)
+                if isinstance(nested, str) and nested.startswith(("http://", "https://")):
+                    return nested
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.startswith(("http://", "https://")):
+                    return item
+                if isinstance(item, dict):
+                    for key in ("url", "href", "src"):
+                        nested = item.get(key)
+                        if isinstance(nested, str) and nested.startswith(("http://", "https://")):
+                            return nested
+    return None
+
+
 def _extract_rows(payload: object) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -289,13 +311,21 @@ def normalize_zillow_listing(
     address, city, state, zip_code = _address_parts(raw, requirements)
     amenities = _amenities(raw)
 
-    rent = _first_number(
-        raw, "price", "rent", "listPrice", "unformattedPrice", "minPrice"
-    )
+    rent_min = _first_number(raw, "minPrice", "minRent")
+    rent_max = _first_number(raw, "maxPrice", "maxRent")
+    range_min, range_max = _numeric_range(_first(raw, "priceRange", "rentRange"))
+    rent_min = rent_min if rent_min is not None else range_min
+    rent_max = rent_max if rent_max is not None else range_max
+    rent = _first_number(raw, "price", "rent", "listPrice", "unformattedPrice")
     if rent is None:
-        _, rent = _numeric_range(_first(raw, "priceRange", "rentRange"))
+        rent = rent_min if rent_min is not None else rent_max
+    elif rent_min is None and rent_max is None:
+        rent_min = rent
+        rent_max = rent
 
     bedrooms = _first_number(raw, "bedrooms", "beds", "resoFacts.bedrooms")
+    bedrooms_min = bedrooms
+    bedrooms_max = bedrooms
     units_group = raw.get("unitsGroup")
     if bedrooms is None and isinstance(units_group, list):
         qualifying_units = [
@@ -325,16 +355,31 @@ def normalize_zillow_listing(
                 ),
             )
             bedrooms = _number(selected_unit.get("bedrooms"))
+            bedrooms_min = bedrooms
+            bedrooms_max = bedrooms
             unit_rent = _number(selected_unit.get("minPrice"))
             if unit_rent is not None:
                 rent = unit_rent
+                rent_min = unit_rent
+                rent_max = _number(selected_unit.get("maxPrice")) or unit_rent
 
+    query_backed_fields: list[str] = []
     pets_allowed = _structured_pets(raw, amenities)
     parking_available = _structured_parking(raw, amenities)
-    if requirements is not None and requirements.pets_required:
+    if (
+        pets_allowed is None
+        and requirements is not None
+        and requirements.pets_required
+    ):
         pets_allowed = True
-    if requirements is not None and requirements.parking_required:
+        query_backed_fields.append("pets_allowed")
+    if (
+        parking_available is None
+        and requirements is not None
+        and requirements.parking_required
+    ):
         parking_available = True
+        query_backed_fields.append("parking_available")
 
     bathrooms = _first_number(raw, "bathrooms", "baths", "resoFacts.bathrooms")
     bathrooms_min_evidence = None
@@ -348,6 +393,7 @@ def normalize_zillow_listing(
         # Keep it as a lower-bound evidence field rather than pretending it is
         # the property's exact bathroom count.
         bathrooms_min_evidence = float(requirements.min_bathrooms)
+        query_backed_fields.append("bathrooms_min_evidence")
 
     source_url = _source_url(raw, provider="zillow")
     if not source_url:
@@ -365,9 +411,44 @@ def normalize_zillow_listing(
         rent=rent,
         bedrooms=bedrooms,
         bathrooms=bathrooms,
+        source_listing_id=raw_id,
+        country_code=_first_text(
+            raw,
+            "countryCode",
+            "address.countryCode",
+            "address.country",
+            "location.address.country_code",
+        ),
+        latitude=_first_number(
+            raw,
+            "latitude",
+            "latLong.latitude",
+            "coordinate.latitude",
+            "location.latitude",
+        ),
+        longitude=_first_number(
+            raw,
+            "longitude",
+            "latLong.longitude",
+            "coordinate.longitude",
+            "location.longitude",
+        ),
+        primary_image_url=_primary_image_url(
+            raw, "imgSrc", "primaryPhoto", "photos", "images"
+        ),
+        rent_min=rent_min,
+        rent_max=rent_max,
+        bedrooms_min=bedrooms_min,
+        bedrooms_max=bedrooms_max,
+        days_on_market=(
+            int(value)
+            if (value := _first_number(raw, "daysOnZillow", "daysOnMarket")) is not None
+            else None
+        ),
         bathrooms_min_evidence=bathrooms_min_evidence,
         property_type=_first_text(raw, "homeType", "propertyType", "resoFacts.homeType"),
         square_footage=_first_number(raw, "livingArea", "livingAreaValue", "sqft", "resoFacts.livingArea"),
+        status=_first_text(raw, "homeStatus", "listingStatus", "status"),
         listed_date=_parse_datetime(_first(raw, "datePosted", "listingDate", "listedDate")),
         last_seen_date=_parse_datetime(_first(raw, "lastUpdated", "updatedAt")),
         pets_allowed=pets_allowed,
@@ -380,6 +461,8 @@ def normalize_zillow_listing(
         pet_policy=_first_text(raw, "petPolicy", "pet_policy", "resoFacts.petPolicy"),
         parking_policy=_first_text(raw, "parkingDescription", "parking.text", "resoFacts.parkingFeatures"),
         detail_verified=detail_verified,
+        description=_first_text(raw, "description", "homeDescription", "resoFacts.description"),
+        query_backed_fields=tuple(query_backed_fields),
     )
 
 
@@ -396,16 +479,31 @@ def normalize_realtor_listing(
     address, city, state, zip_code = _address_parts(raw, requirements)
     amenities = _amenities(raw)
 
+    rent_min = _first_number(raw, "price_min", "minPrice", "minRent")
+    rent_max = _first_number(raw, "price_max", "maxPrice", "maxRent")
+    range_min, range_max = _numeric_range(_first(raw, "priceRange", "rentRange"))
+    rent_min = rent_min if rent_min is not None else range_min
+    rent_max = rent_max if rent_max is not None else range_max
     rent = _first_number(raw, "price", "list_price", "listPrice", "rent")
     if rent is None:
-        _, rent = _numeric_range(_first(raw, "priceRange", "rentRange"))
+        rent = rent_min if rent_min is not None else rent_max
+    elif rent_min is None and rent_max is None:
+        rent_min = rent
+        rent_max = rent
 
+    query_backed_fields: list[str] = []
     pets_allowed = _structured_pets(raw, amenities)
-    if requirements is not None and requirements.pets_required:
+    if (
+        pets_allowed is None
+        and requirements is not None
+        and requirements.pets_required
+    ):
         # Realtor petsAllowed is an explicit rental filter, so this is query-backed evidence.
         pets_allowed = True
+        query_backed_fields.append("pets_allowed")
 
     year_built = _first_number(raw, "year_built", "yearBuilt", "description.year_built")
+    realtor_bedrooms = _first_number(raw, "beds", "bedrooms", "description.beds")
     return Listing(
         id=f"realtor:{raw_id}",
         address=address,
@@ -413,10 +511,50 @@ def normalize_realtor_listing(
         state=state,
         zip_code=zip_code,
         rent=rent,
-        bedrooms=_first_number(raw, "beds", "bedrooms", "description.beds"),
+        bedrooms=realtor_bedrooms,
         bathrooms=_first_number(raw, "baths", "bathrooms", "description.baths"),
+        source_listing_id=(
+            str(value)
+            if (value := _first(raw, "listing_id", "listingId")) is not None
+            else None
+        ),
+        country_code=_first_text(
+            raw,
+            "countryCode",
+            "location.address.country_code",
+            "location.address.country",
+            "address.countryCode",
+        ),
+        latitude=_first_number(
+            raw,
+            "latitude",
+            "coordinate.lat",
+            "location.coordinate.lat",
+            "location.address.coordinate.lat",
+        ),
+        longitude=_first_number(
+            raw,
+            "longitude",
+            "coordinate.lon",
+            "coordinate.lng",
+            "location.coordinate.lon",
+            "location.address.coordinate.lon",
+        ),
+        primary_image_url=_primary_image_url(
+            raw, "primary_photo", "photo", "photos", "images"
+        ),
+        rent_min=rent_min,
+        rent_max=rent_max,
+        bedrooms_min=realtor_bedrooms,
+        bedrooms_max=realtor_bedrooms,
+        days_on_market=(
+            int(value)
+            if (value := _first_number(raw, "days_on_market", "daysOnMarket")) is not None
+            else None
+        ),
         property_type=_first_text(raw, "property_type", "propertyType", "description.type"),
         square_footage=_first_number(raw, "sqft", "squareFeet", "description.sqft"),
+        status=_first_text(raw, "status", "listing_status"),
         listed_date=_parse_datetime(_first(raw, "list_date", "listingDate", "listedDate")),
         last_seen_date=_parse_datetime(_first(raw, "last_update_date", "updatedAt")),
         pets_allowed=pets_allowed,
@@ -430,6 +568,8 @@ def normalize_realtor_listing(
         pet_policy=_first_text(raw, "petPolicy", "pet_policy"),
         parking_policy=_first_text(raw, "parkingDescription", "parking.text"),
         detail_verified=detail_verified,
+        description=_first_text(raw, "description.text", "remarks", "public_remarks"),
+        query_backed_fields=tuple(query_backed_fields),
     )
 
 

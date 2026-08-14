@@ -94,6 +94,121 @@ def test_search_returns_all_properties_and_keeps_top_aliases(monkeypatch):
     ]
 
 
+def test_search_tool_preserves_rich_canonical_listing_fields(monkeypatch):
+    class RichListingProvider:
+        def search(self, requirements):
+            return [
+                Listing(
+                    id="rich-1",
+                    address="100 Castro St",
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code="94041",
+                    rent=3800,
+                    bedrooms=2,
+                    bathrooms=2,
+                    source_listing_id="provider-123",
+                    latitude=37.3861,
+                    longitude=-122.0839,
+                    primary_image_url="https://img.example.test/rich.jpg",
+                    rent_min=3700,
+                    rent_max=3900,
+                    days_on_market=5,
+                    square_footage=980,
+                    amenities=("Parking", "Gym"),
+                    source="test-source",
+                    source_url="https://example.test/rich-1",
+                )
+            ]
+
+        def get_listing(self, listing_id):
+            raise AssertionError("detail lookup should not be needed")
+
+        def health(self):
+            return {"ok": True, "provider": "rich-listing"}
+
+    monkeypatch.setattr(agent_module, "get_provider", lambda: RichListingProvider())
+    result = search_listings(city="Mountain View", max_rent=4000, min_bedrooms=2)
+
+    listing = result["property_groups"][0]["representative"]["listing"]
+    assert listing["source_listing_id"] == "provider-123"
+    assert listing["latitude"] == 37.3861
+    assert listing["longitude"] == -122.0839
+    assert listing["primary_image_url"] == "https://img.example.test/rich.jpg"
+    assert listing["rent_min"] == 3700
+    assert listing["rent_max"] == 3900
+    assert listing["days_on_market"] == 5
+    assert listing["square_footage"] == 980
+    assert listing["amenities"] == ("Parking", "Gym")
+
+
+def test_backend_handoff_is_grouped_versioned_and_reports_completeness():
+    listing = Listing(
+        id="handoff-1",
+        source_listing_id="provider-1",
+        address="123 Main St",
+        city="Mountain View",
+        state="CA",
+        zip_code="94041",
+        country_code="US",
+        latitude=37.3861,
+        longitude=-122.0839,
+        rent=3500,
+        rent_min=3400,
+        rent_max=3600,
+        bedrooms=2,
+        bedrooms_min=2,
+        bedrooms_max=2,
+        bathrooms=None,
+        bathrooms_min_evidence=2,
+        property_type="Apartment",
+        pets_allowed=True,
+        parking_available=True,
+        primary_image_url="https://img.example.test/home.jpg",
+        source="realtyapi-apartments",
+        source_url="https://example.test/listing",
+        amenities=("Gym", "Parking"),
+        phone="(650) 555-0100",
+        query_backed_fields=(
+            "bathrooms_min_evidence",
+            "pets_allowed",
+            "parking_available",
+        ),
+    )
+
+    payload = listing.to_backend_dict()
+
+    assert payload["schemaVersion"] == "kbf.canonical-listing.v1"
+    assert payload["identity"]["id"] == "handoff-1"
+    assert payload["location"]["latitude"] == 37.3861
+    assert payload["location"]["countryCode"] == "US"
+    assert payload["pricing"] == {"rent": None, "rentMin": 3400, "rentMax": 3600}
+    assert payload["property"]["bedrooms"] == 2
+    assert payload["property"]["bedroomsMin"] == 2
+    assert payload["property"]["bedroomsMax"] == 2
+    assert payload["property"]["bathrooms"] is None
+    assert payload["property"]["bathroomsMinEvidence"] == 2
+    assert payload["media"]["primaryImageUrl"] == "https://img.example.test/home.jpg"
+    assert payload["contact"]["phone"] == "(650) 555-0100"
+    assert payload["evidence"]["queryBackedFields"] == [
+        "property.bathroomsMinEvidence",
+        "policies.petsAllowed",
+        "policies.parkingAvailable",
+    ]
+    assert payload["evidence"]["criticalQueryBackedFields"] == [
+        "property.bathroomsMinEvidence",
+        "policies.petsAllowed",
+        "policies.parkingAvailable",
+    ]
+    assert payload["completeness"]["mapReady"] is True
+    assert payload["completeness"]["cardReady"] is True
+    assert payload["completeness"]["comparisonReady"] is True
+    assert payload["completeness"]["decisionReady"] is False
+    assert payload["completeness"]["verificationRequired"] is True
+    assert "property.squareFootage" in payload["completeness"]["unknownFields"]
+    assert payload["completeness"]["knownCount"] < payload["completeness"]["totalCount"]
+
+
 def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_separate(monkeypatch):
     class MultiPostProvider:
         def search(self, requirements):
