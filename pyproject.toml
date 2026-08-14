@@ -1,0 +1,28 @@
+[project]
+name = "keys-by-friday"
+version = "0.1.0"
+description = "Single-agent Silicon Valley rental search MVP"
+requires-python = ">=3.11"
+dependencies = [
+  "google-adk>=2.1.0,<3.0.0",
+  "httpx>=0.28,<1.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.scripts]
+kbf = "rental_agent.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9.0"]
+backend = ["fastapi>=0.116,<1.0", "uvicorn[standard]>=0.35,<1.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rental_agent"]
