@@ -160,20 +160,20 @@ def init_command() -> int:
         "Install Node.js 24 (recommended) from https://nodejs.org/",
     )
 
-    print("[1/4] Preparing Python environment...")
+    print("[1/5] Preparing Python environment...")
     subprocess.run(
         [uv, "sync", "--frozen", "--extra", "dev", "--extra", "backend"],
         cwd=root,
         check=True,
     )
 
-    print("[2/4] Preparing frontend dependencies...")
+    print("[2/5] Preparing frontend dependencies...")
     subprocess.run([npm, "ci"], cwd=frontend, check=True)
 
     env_path = root / ".env"
     existing = _read_env(env_path)
 
-    print("\n[3/4] API keys")
+    print("\n[3/5] API keys")
     print(f"Gemini API key: {GEMINI_KEY_URL}")
     print(f"RealtyAPI key:   {REALTYAPI_KEY_URL}")
     print("Create the keys in those pages, then paste them below.")
@@ -210,13 +210,27 @@ def init_command() -> int:
         encoding="utf-8",
     )
 
-    print("\n[4/4] Done")
+    print("\n[4/5] Installing the kbf command...")
+    subprocess.run(
+        [uv, "tool", "install", "--editable", "."],
+        cwd=root,
+        check=True,
+    )
+
+    print("\n[5/5] Done")
     print("Environment is ready.")
+    print("\nInitialize again later if needed:")
+    print("  kbf init")
+    print("  .\\kbf init")
     print("\nStart the full product:")
     print("  kbf start")
+    print("  .\\kbf start")
+    print("\nStart the Agent-only UI:")
+    print("  kbf agent")
+    print("  .\\kbf agent")
     print(f"\nProduct UI:    http://localhost:{DEFAULT_FRONTEND_PORT}")
     print(f"API docs:      http://localhost:{DEFAULT_BACKEND_PORT}/docs")
-    print(f"Agent-only UI: kbf agent  # http://localhost:{DEFAULT_AGENT_PORT}")
+    print(f"Agent-only UI: http://localhost:{DEFAULT_AGENT_PORT}")
     return 0
 
 

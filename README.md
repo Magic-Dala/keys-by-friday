@@ -2,126 +2,142 @@
 
 AI rental search built with **Next.js + FastAPI + Google ADK**.
 
-> This README is the stable project entry point. New team members should be able to clone the repo, initialize it, and run the full product from here.
+If you just want to run the project, start here.
 
 ## Quick Start
 
-### 1. Requirements
+### 1. Install the prerequisites
 
-Install:
+You need:
 
 - [Git](https://git-scm.com/)
-- [uv](https://docs.astral.sh/uv/) for Python
+- [uv](https://docs.astral.sh/uv/)
 - [Node.js](https://nodejs.org/) 24 recommended
 
-On Windows, uv can be installed with:
+On Windows, install `uv` with:
 
 ```powershell
 winget install --id=astral-sh.uv -e
 ```
 
-### 2. Install the project CLI
+### 2. Initialize the project once
 
 From the repository root:
 
 ```powershell
-uv tool install --editable .
+.\kbf init
 ```
 
-This gives you the `kbf` command.
+The setup does the rest for you:
 
-### 3. Initialize once
+- installs Python and FastAPI dependencies
+- installs frontend npm dependencies
+- shows where to create the Gemini and RealtyAPI keys
+- asks for the keys securely
+- creates the local `.env` files
+- installs the normal `kbf` command
 
-```powershell
-kbf init
-```
+API keys:
 
-`kbf init` prepares the full local development environment:
+- Gemini: https://aistudio.google.com/app/apikey
+- RealtyAPI: https://www.realtyapi.io/
 
-- Python dependencies
-- FastAPI backend dependencies
-- Frontend npm dependencies
-- Gemini API key
-- RealtyAPI key
-- Backend `.env`
-- Frontend `.env.local`
+### 3. Start the app
 
-The setup will show where to create the required API keys and prompt for them securely.
-
-### 4. Start the full product
+Use either form:
 
 ```powershell
 kbf start
 ```
 
-Then open:
-
-- **Product UI:** http://localhost:3000
-- **API docs:** http://localhost:8000/docs
-- **Backend health:** http://localhost:8000/health
-
-`kbf start` runs both the Next.js frontend and FastAPI backend. The backend runs the Google ADK rental agent internally.
-
-Press `Ctrl+C` once to stop both services.
-
-If a default port is already in use, choose another pair:
+or:
 
 ```powershell
-kbf start --frontend-port 3001 --backend-port 8021
+.\kbf start
 ```
+
+Then open **http://localhost:3000**.
+
+Useful local URLs:
+
+| Service | URL |
+|---|---|
+| Product UI | http://localhost:3000 |
+| API docs | http://localhost:8000/docs |
+| Backend health | http://localhost:8000/health |
+| ADK Web | http://localhost:8765 |
+
+Press `Ctrl+C` once to stop the frontend and backend.
+
+## CLI Commands
+
+After the first `init`, both the installed command and repository-local launcher are supported:
+
+| Task | Installed command | Repo-local command |
+|---|---|---|
+| Initialize / refresh setup | `kbf init` | `.\kbf init` |
+| Start the full product | `kbf start` | `.\kbf start` |
+| Start ADK Web only | `kbf agent` | `.\kbf agent` |
+
+For a completely fresh clone, use `.\kbf init` first. That command installs the normal `kbf` command for later use.
+
+If `kbf` is not found in the current terminal after initialization, open a new terminal or use the `.\kbf ...` form.
 
 ## Agent-only Development
 
-If you only need the Google ADK developer UI:
+To work directly with the Google ADK developer UI without starting the product frontend:
 
 ```powershell
 kbf agent
 ```
 
-Open:
+or:
 
-- **ADK Web:** http://localhost:8765
+```powershell
+.\kbf agent
+```
 
-This is equivalent to:
+Then open **http://localhost:8765**.
+
+This wraps:
 
 ```powershell
 uv run adk web . --no-reload --port 8765
 ```
 
-ADK Web is for Agent development and debugging. It is **not** the product frontend.
+ADK Web is for Agent development and debugging. The normal product does **not** depend on port 8765.
 
-## How Everything Connects
+## Custom Ports
+
+If port `3000` or `8000` is already being used:
+
+```powershell
+kbf start --frontend-port 3001 --backend-port 8021
+```
+
+The repository-local form works too:
+
+```powershell
+.\kbf start --frontend-port 3001 --backend-port 8021
+```
+
+## How the Product Connects
 
 ```text
-Product UI
-http://localhost:3000
-        │
-        │ POST /api/chat
-        ▼
-FastAPI Backend
-http://localhost:8000
-        │
-        ▼
+Browser
+  ↓
+Next.js Frontend :3000
+  ↓  POST /api/chat
+FastAPI Backend :8000
+  ↓
 AgentService
-        │
-        ▼
+  ↓
 Google ADK Rental Agent
-        │
-        ▼
+  ↓
 Rental Provider
 ```
 
-The product baseline is:
-
-```text
-Next.js Frontend
-→ FastAPI Backend
-→ AgentService
-→ Google ADK Rental Agent
-→ Rental Provider
-```
-
-Feature work should extend this flow instead of creating a parallel architecture.
+The frontend talks only to the FastAPI API. The backend owns the ADK adapter. Rental search, ranking, verification, and provider logic stay in `rental_agent/**`.
 
 ## Team Ownership
 
@@ -139,21 +155,11 @@ GET  /health
 POST /api/chat
 ```
 
-Frontend code calls the FastAPI contract and does not import Python or ADK directly. Backend code stays thin and does not duplicate Agent search, ranking, or provider logic.
+Feature work should extend this baseline instead of creating a parallel architecture.
 
-## Commands
+## Before Opening a PR
 
-| Command | Purpose |
-|---|---|
-| `kbf init` | First-time setup for the full project |
-| `kbf start` | Start Frontend + Backend + ADK product flow |
-| `kbf agent` | Start the ADK developer UI only |
-
-For individual service commands and troubleshooting, see [`docs/development.md`](docs/development.md).
-
-## Development Checks
-
-Before opening a PR, the baseline checks are:
+Run the same baseline checks used by CI:
 
 ```powershell
 uv run pytest backend/tests tests -q
@@ -163,18 +169,18 @@ cd frontend
 npm run check
 ```
 
-GitHub Actions runs the same baseline checks on pushes and pull requests.
+GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
-| `README.md` | Friendly project entry point and stable direction |
+| `README.md` | Start here: setup, commands, and project overview |
 | `docs/architecture.md` | Stable system boundaries |
 | `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
-| `docs/development.md` | Setup, manual commands, and team workflow |
+| `docs/development.md` | Manual service commands and contributor workflow |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |
 
-Stable documents should only change when the actual project direction, architecture, API contract, setup, ownership, or Agent authority changes. Normal feature progress belongs in `status.md` and `roadmap.md`.
+Stable documents change only when the actual setup, architecture, API contract, ownership, or Agent authority changes. Normal progress belongs in `docs/status.md` and `docs/roadmap.md`.

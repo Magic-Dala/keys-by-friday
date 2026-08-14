@@ -28,7 +28,7 @@ def test_parser_rejects_invalid_ports() -> None:
         raise AssertionError("invalid port should be rejected")
 
 
-def test_init_prepares_full_product(monkeypatch, tmp_path: Path) -> None:
+def test_init_prepares_full_product(monkeypatch, tmp_path: Path, capsys) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
     frontend = tmp_path / "frontend"
     frontend.mkdir()
@@ -59,6 +59,7 @@ def test_init_prepares_full_product(monkeypatch, tmp_path: Path) -> None:
     ]
     assert commands[0][1] == tmp_path
     assert commands[1] == (["/npm", "ci"], frontend)
+    assert commands[2] == (["/uv", "tool", "install", "--editable", "."], tmp_path)
 
     env = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "GOOGLE_API_KEY=gemini-key" in env
@@ -69,6 +70,14 @@ def test_init_prepares_full_product(monkeypatch, tmp_path: Path) -> None:
 
     frontend_env = (frontend / ".env.local").read_text(encoding="utf-8")
     assert frontend_env == "NEXT_PUBLIC_BACKEND_URL=http://localhost:8000\n"
+
+    output = capsys.readouterr().out
+    assert "kbf init" in output
+    assert ".\\kbf init" in output
+    assert "kbf start" in output
+    assert ".\\kbf start" in output
+    assert "kbf agent" in output
+    assert ".\\kbf agent" in output
 
 
 def test_start_requires_init(monkeypatch, tmp_path: Path) -> None:

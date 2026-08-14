@@ -4,18 +4,27 @@
 
 ## Recommended Workflow
 
-First-time setup:
+First-time setup from the repository root:
 
 ```powershell
-uv tool install --editable .
+.\kbf init
+```
+
+`kbf init` prepares the project and installs the normal `kbf` command for later use. After the first initialization, either form can be used to initialize or refresh setup:
+
+```powershell
 kbf init
+.\kbf init
 ```
 
 Normal full-product development:
 
 ```powershell
 kbf start
+.\kbf start
 ```
+
+Both forms are supported. The plain `kbf` command is installed by `init`; the `.\kbf` form runs through the repository-local launcher.
 
 Default local URLs:
 
@@ -50,6 +59,7 @@ Use the ADK developer UI when working only on Agent behavior or tools:
 
 ```powershell
 kbf agent
+.\kbf agent
 ```
 
 Default URL:
