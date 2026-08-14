@@ -287,9 +287,45 @@ def normalize_zillow_listing(
     address, city, state, zip_code = _address_parts(raw, requirements)
     amenities = _amenities(raw)
 
-    rent = _first_number(raw, "price", "rent", "listPrice", "unformattedPrice")
+    rent = _first_number(
+        raw, "price", "rent", "listPrice", "unformattedPrice", "minPrice"
+    )
     if rent is None:
         _, rent = _numeric_range(_first(raw, "priceRange", "rentRange"))
+
+    bedrooms = _first_number(raw, "bedrooms", "beds", "resoFacts.bedrooms")
+    units_group = raw.get("unitsGroup")
+    if bedrooms is None and isinstance(units_group, list):
+        qualifying_units = [
+            unit
+            for unit in units_group
+            if isinstance(unit, dict)
+            and _number(unit.get("bedrooms")) is not None
+            and (
+                requirements is None
+                or requirements.min_bedrooms is None
+                or float(_number(unit.get("bedrooms"))) >= requirements.min_bedrooms
+            )
+            and (
+                requirements is None
+                or requirements.max_bedrooms is None
+                or float(_number(unit.get("bedrooms"))) <= requirements.max_bedrooms
+            )
+        ]
+        if qualifying_units:
+            selected_unit = min(
+                qualifying_units,
+                key=lambda unit: (
+                    _number(unit.get("minPrice"))
+                    if _number(unit.get("minPrice")) is not None
+                    else float("inf"),
+                    _number(unit.get("bedrooms")) or float("inf"),
+                ),
+            )
+            bedrooms = _number(selected_unit.get("bedrooms"))
+            unit_rent = _number(selected_unit.get("minPrice"))
+            if unit_rent is not None:
+                rent = unit_rent
 
     pets_allowed = _structured_pets(raw, amenities)
     parking_available = _structured_parking(raw, amenities)
@@ -306,7 +342,7 @@ def normalize_zillow_listing(
         state=state,
         zip_code=zip_code,
         rent=rent,
-        bedrooms=_first_number(raw, "bedrooms", "beds", "resoFacts.bedrooms"),
+        bedrooms=bedrooms,
         bathrooms=_first_number(raw, "bathrooms", "baths", "resoFacts.bathrooms"),
         property_type=_first_text(raw, "homeType", "propertyType", "resoFacts.homeType"),
         square_footage=_first_number(raw, "livingArea", "livingAreaValue", "sqft", "resoFacts.livingArea"),
@@ -463,9 +499,28 @@ class RealtyApiMultiProvider(ListingProvider):
             params["otherAmenities"] = "On-site Parking"
 
         response = self._zillow.get("/search/byaddress", params=params)
+        if response.status_code == 402:
+            remaining = response.headers.get("X-Credits-Remaining")
+            try:
+                error = response.json().get("error")
+            except (ValueError, AttributeError):
+                error = None
+            try:
+                remaining_credits = int(remaining) if remaining is not None else 0
+            except ValueError:
+                remaining_credits = 0
+            if error == "Not enough credits remaining" and remaining_credits > 0:
+                response = self._zillow.get("/search/byaddress", params=params)
         response.raise_for_status()
         rows = _extract_rows(response.json())[: max(1, requirements.limit)]
-        return [normalize_zillow_listing(row, requirements=requirements) for row in rows]
+        normalized_rows: list[Listing] = []
+        for row in rows:
+            property_row = row.get("property")
+            raw = property_row if isinstance(property_row, dict) else row
+            normalized_rows.append(
+                normalize_zillow_listing(raw, requirements=requirements)
+            )
+        return normalized_rows
 
     def _search_realtor(self, requirements: SearchRequirements) -> list[Listing]:
         params: dict[str, str | int] = {

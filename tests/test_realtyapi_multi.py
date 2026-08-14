@@ -143,6 +143,63 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     assert realtor.parking_available is None
 
 
+
+def test_zillow_search_unwraps_live_property_envelope_and_uses_unit_evidence():
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "searchResults": [
+                    {
+                        "resultType": "building",
+                        "property": {
+                            "zpid": 461662543,
+                            "address": {
+                                "streetAddress": "191 E El Camino Real",
+                                "city": "Mountain View",
+                                "state": "CA",
+                                "zipcode": "94040",
+                            },
+                            "minPrice": 3795,
+                            "maxPrice": 3995,
+                            "unitsGroup": [
+                                {"bedrooms": 2, "minPrice": 3795},
+                                {"bedrooms": 3, "minPrice": 3995},
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    results = provider.search(
+        SearchRequirements(
+            city="Mountain View",
+            state="CA",
+            max_rent=4000,
+            min_bedrooms=2,
+            limit=5,
+        )
+    )
+
+    assert len(results) == 1
+    listing = results[0]
+    assert listing.id == "zillow:461662543"
+    assert listing.source == "realtyapi-zillow"
+    assert listing.address == "191 E El Camino Real"
+    assert listing.city == "Mountain View"
+    assert listing.state == "CA"
+    assert listing.rent == 3795
+    assert listing.bedrooms == 2
+    assert listing.bathrooms is None
+
 def test_one_source_failure_does_not_fail_search():
     def apartments_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"searchResults": [_apartments_row()]})
@@ -296,3 +353,59 @@ def test_realtor_full_state_name_normalizes_for_hard_filters():
     assert result.source == "realtyapi-realtor"
     assert result.state == "CA"
     assert passes_hard_filters(result, requirements) is True
+
+
+def test_zillow_retries_once_when_402_conflicts_with_positive_credit_header():
+    zillow_calls = 0
+
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal zillow_calls
+        zillow_calls += 1
+        if zillow_calls == 1:
+            return httpx.Response(
+                402,
+                headers={"X-Credits-Remaining": "10"},
+                json={"error": "Not enough credits remaining"},
+            )
+        return httpx.Response(200, json={"results": [_zillow_row("retry-ok")]})
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    results = provider.search(
+        SearchRequirements(city="Mountain View", state="CA", limit=3)
+    )
+
+    assert zillow_calls == 2
+    assert [listing.id for listing in results] == ["zillow:retry-ok"]
+
+
+def test_zillow_does_not_retry_when_credits_are_actually_exhausted():
+    zillow_calls = 0
+
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": [_apartments_row()]})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal zillow_calls
+        zillow_calls += 1
+        return httpx.Response(
+            402,
+            headers={"X-Credits-Remaining": "0"},
+            json={"error": "Not enough credits remaining"},
+        )
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    results = provider.search(
+        SearchRequirements(city="Mountain View", state="CA", limit=3)
+    )
+
+    assert zillow_calls == 1
+    assert [listing.source for listing in results] == ["realtyapi-apartments"]
