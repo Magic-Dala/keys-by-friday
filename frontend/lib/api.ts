@@ -32,6 +32,18 @@ function optionalNumber(value: unknown, field: string): number | undefined {
   return value;
 }
 
+function optionalUrl(value: unknown, field: string): string | undefined {
+  const url = optionalString(value, field);
+  if (url === undefined) return undefined;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.toString();
+  } catch {
+    // Fall through to the stable response-shape error below.
+  }
+  throw new ApiError(`Invalid ${field} in API response.`);
+}
+
 function parseListing(value: unknown): Listing {
   if (!isRecord(value) || typeof value.id !== "string") {
     throw new ApiError("Invalid listing in API response.");
@@ -44,7 +56,7 @@ function parseListing(value: unknown): Listing {
     price: optionalNumber(value.price, "listing price"),
     bedrooms: optionalNumber(value.bedrooms, "listing bedrooms"),
     bathrooms: optionalNumber(value.bathrooms, "listing bathrooms"),
-    url: optionalString(value.url, "listing URL"),
+    url: optionalUrl(value.url, "listing URL"),
     score: optionalNumber(value.score, "listing score"),
     reason: optionalString(value.reason, "listing reason"),
   };
@@ -84,16 +96,24 @@ export async function sendChat(
   request: SearchRequest,
   options: { signal?: AbortSignal } = {},
 ): Promise<SearchResponse> {
-  const response = await fetch(`${backendUrl}/api/chat`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-    cache: "no-store",
-    signal: options.signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/chat`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      cache: "no-store",
+      signal: options.signal,
+    });
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "AbortError") throw caught;
+    throw new ApiError(
+      "Can’t reach the rental service. Check that the backend is running, then try again.",
+    );
+  }
 
   if (!response.ok) {
     throw new ApiError(await errorMessage(response), response.status);
