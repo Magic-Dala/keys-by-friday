@@ -4,7 +4,9 @@ from backend.app.main import app
 from backend.app.services.agent_service import (
     AgentService,
     AgentServiceError,
+    _commute_evaluation_from_tool_payload,
     _normalize_tool_listings,
+    _route_from_tool_payload,
     get_agent_service,
 )
 
@@ -53,6 +55,8 @@ def test_normalize_adk_tool_results_for_web_contract() -> None:
                     "rent": 3180,
                     "bedrooms": 2,
                     "bathrooms": 2,
+                    "latitude": 37.4,
+                    "longitude": -122.1,
                     "source_url": "https://example.com/listing-1",
                 },
                 "score": 9.5,
@@ -69,6 +73,8 @@ def test_normalize_adk_tool_results_for_web_contract() -> None:
                 "rent": 3180,
                 "bedrooms": 2,
                 "bathrooms": 2,
+                "latitude": 37.401,
+                "longitude": -122.101,
                 "source_url": "https://example.com/listing-1",
                 "detail_verified": True,
             },
@@ -84,8 +90,87 @@ def test_normalize_adk_tool_results_for_web_contract() -> None:
     assert listing.title == "Heatherstone Apartments"
     assert listing.price == 3180
     assert listing.url == "https://example.com/listing-1"
+    assert listing.latitude == 37.401
+    assert listing.longitude == -122.101
     assert listing.score == 9.5
     assert listing.reason == "within budget; matches 2B2B"
+
+
+def test_normalize_commute_and_selected_route_contract() -> None:
+    search_payload = {
+        "top_5": [
+            {
+                "listing": {
+                    "id": "listing-1",
+                    "address": "877 Heatherstone Way",
+                    "latitude": 37.4,
+                    "longitude": -122.1,
+                },
+                "commute": {
+                    "destination": "Google Mountain View",
+                    "destination_place_id": None,
+                    "mode": "DRIVE",
+                    "duration_minutes": 18,
+                    "distance_meters": 12400,
+                    "status": "available",
+                    "routing_preference": "TRAFFIC_AWARE",
+                },
+            }
+        ]
+    }
+    listing = _normalize_tool_listings(search_payload, [])[0]
+    assert listing.commute is not None
+    assert listing.commute.durationMinutes == 18
+    assert listing.commute.distanceMeters == 12400
+    assert listing.commute.routingPreference == "TRAFFIC_AWARE"
+
+    evaluation = _commute_evaluation_from_tool_payload(
+        {
+            "status": "partial",
+            "evaluated_count": 3,
+            "available_count": 2,
+            "unavailable_count": 1,
+            "unknown_count": 0,
+            "within_limit_count": 1,
+            "over_limit_count": 1,
+        }
+    )
+    assert evaluation is not None
+    assert evaluation.status == "partial"
+    assert evaluation.evaluatedCount == 3
+    assert evaluation.withinLimitCount == 1
+    assert evaluation.overLimitCount == 1
+
+    unavailable = _commute_evaluation_from_tool_payload(
+        {
+            "status": "unavailable",
+            "evaluated_count": 2,
+            "available_count": 0,
+            "unavailable_count": 2,
+            "unknown_count": 0,
+            "within_limit_count": 0,
+            "over_limit_count": 0,
+        }
+    )
+    assert unavailable is not None
+    assert unavailable.status == "unavailable"
+    assert unavailable.evaluatedCount == 2
+
+    route = _route_from_tool_payload(
+        {
+            "listing_id": "listing-1",
+            "destination": "Google Mountain View",
+            "destination_place_id": None,
+            "mode": "DRIVE",
+            "duration_minutes": 18,
+            "distance_meters": 12400,
+            "encoded_polyline": "abc123",
+            "status": "available",
+        }
+    )
+    assert route is not None
+    assert route.listingId == "listing-1"
+    assert route.encodedPolyline == "abc123"
 
 
 def test_normalize_preserves_grouped_source_postings_for_web_contract() -> None:

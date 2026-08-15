@@ -5,7 +5,14 @@ from typing import Any
 from uuid import uuid4
 
 from backend.app.config import get_settings
-from backend.app.models.search import ListingResponse, SearchResponse, SourcePostingResponse
+from backend.app.models.search import (
+    CommuteEvaluationResponse,
+    CommuteResponse,
+    ListingResponse,
+    RouteDetailResponse,
+    SearchResponse,
+    SourcePostingResponse,
+)
 
 
 _CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
@@ -50,6 +57,77 @@ def _canonical_listing_id(container: dict[str, Any] | None) -> str | None:
     return normalized or None
 
 
+def _commute_from_tool_payload(value: object) -> CommuteResponse | None:
+    if not isinstance(value, dict) or not value.get("destination"):
+        return None
+    status = value.get("status")
+    if status not in {"available", "unavailable", "unknown"}:
+        return None
+    duration = value.get("duration_minutes")
+    distance = value.get("distance_meters")
+    return CommuteResponse(
+        destination=str(value["destination"]),
+        destinationPlaceId=(
+            str(value["destination_place_id"])
+            if value.get("destination_place_id")
+            else None
+        ),
+        mode=str(value["mode"]) if value.get("mode") else None,
+        durationMinutes=int(duration) if isinstance(duration, (int, float)) else None,
+        distanceMeters=int(distance) if isinstance(distance, (int, float)) else None,
+        status=status,
+        routingPreference=(
+            str(value["routing_preference"]) if value.get("routing_preference") else None
+        ),
+    )
+
+
+def _commute_evaluation_from_tool_payload(
+    value: object,
+) -> CommuteEvaluationResponse | None:
+    if not isinstance(value, dict):
+        return None
+    status = value.get("status")
+    if status not in {
+        "not_requested",
+        "requires_input",
+        "available",
+        "partial",
+        "unavailable",
+        "unknown",
+    }:
+        return None
+
+    def count(name: str) -> int:
+        raw = value.get(name, 0)
+        return int(raw) if isinstance(raw, (int, float)) and raw >= 0 else 0
+
+    return CommuteEvaluationResponse(
+        status=status,
+        evaluatedCount=count("evaluated_count"),
+        availableCount=count("available_count"),
+        unavailableCount=count("unavailable_count"),
+        unknownCount=count("unknown_count"),
+        withinLimitCount=count("within_limit_count"),
+        overLimitCount=count("over_limit_count"),
+    )
+
+
+def _route_from_tool_payload(value: object) -> RouteDetailResponse | None:
+    if not isinstance(value, dict) or value.get("listing_id") is None:
+        return None
+    commute = _commute_from_tool_payload(value)
+    if commute is None:
+        return None
+    return RouteDetailResponse(
+        **commute.model_dump(),
+        listingId=str(value["listing_id"]),
+        encodedPolyline=(
+            str(value["encoded_polyline"]) if value.get("encoded_polyline") else None
+        ),
+    )
+
+
 def _listing_from_tool_payload(
     listing: dict[str, Any],
     ranked: dict[str, Any] | None = None,
@@ -75,6 +153,7 @@ def _listing_from_tool_payload(
         )
         address = location.get("address")
         property_name = identity.get("propertyName")
+        commute = _commute_from_tool_payload(ranked.get("commute")) if ranked else None
         return ListingResponse(
             id=str(listing_id),
             title=str(property_name or address) if property_name or address else None,
@@ -89,11 +168,14 @@ def _listing_from_tool_payload(
             bathroomsMinEvidence=_optional_float(
                 property_data.get("bathroomsMinEvidence")
             ),
+            latitude=_optional_float(location.get("latitude")),
+            longitude=_optional_float(location.get("longitude")),
             url=str(source.get("url")) if source.get("url") else None,
             score=_optional_float(ranked.get("score")) if ranked else None,
             reason=reason or None,
             rank=rank,
             sourcePostings=source_postings or [],
+            commute=commute,
         )
 
     listing_id = listing.get("id")
@@ -104,6 +186,7 @@ def _listing_from_tool_payload(
     reason = "; ".join(str(item) for item in reasons if item) if isinstance(reasons, list) else None
     address = listing.get("address")
     property_name = listing.get("property_name")
+    commute = _commute_from_tool_payload(ranked.get("commute")) if ranked else None
 
     return ListingResponse(
         id=str(listing_id),
@@ -117,11 +200,14 @@ def _listing_from_tool_payload(
         bedroomsMax=_optional_float(listing.get("bedrooms_max")),
         bathrooms=_optional_float(listing.get("bathrooms")),
         bathroomsMinEvidence=_optional_float(listing.get("bathrooms_min_evidence")),
+        latitude=_optional_float(listing.get("latitude")),
+        longitude=_optional_float(listing.get("longitude")),
         url=str(listing.get("source_url")) if listing.get("source_url") else None,
         score=_optional_float(ranked.get("score")) if ranked else None,
         reason=reason or None,
         rank=rank,
         sourcePostings=source_postings or [],
+        commute=commute,
     )
 
 
@@ -343,6 +429,7 @@ class AgentService:
             final_text = ""
             search_payload: dict[str, Any] | None = None
             detail_payloads: list[dict[str, Any]] = []
+            route_payload: dict[str, Any] | None = None
 
             async for event in runner.run_async(
                 user_id=user_id, session_id=conversation_id, new_message=content
@@ -355,6 +442,8 @@ class AgentService:
                         search_payload = payload
                     elif function_response.name == "get_listing_details":
                         detail_payloads.append(payload)
+                    elif function_response.name == "get_route_details":
+                        route_payload = payload
 
                 if event.is_final_response() and event.content:
                     final_text = "".join(
@@ -370,6 +459,10 @@ class AgentService:
             conversationId=conversation_id,
             message=final_text,
             listings=_normalize_tool_listings(search_payload, detail_payloads),
+            commuteEvaluation=_commute_evaluation_from_tool_payload(
+                search_payload.get("commute_summary") if search_payload else None
+            ),
+            route=_route_from_tool_payload(route_payload),
             mode="adk",
         )
 

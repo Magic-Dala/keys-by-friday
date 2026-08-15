@@ -9,6 +9,13 @@ from dotenv import load_dotenv
 from google.adk import Agent
 from google.adk.tools.tool_context import ToolContext
 
+from rental_agent.commute import (
+    CommuteOrigin,
+    CommuteResult,
+    RouteDetail,
+    get_commute_service,
+    normalize_travel_mode,
+)
 from rental_agent.llm import build_ordered_gemini
 from rental_agent.models import Listing, SearchRequirements
 from rental_agent.pipeline import filter_and_rank, passes_hard_filters
@@ -56,6 +63,9 @@ def _requirements_to_dict(req: SearchRequirements) -> dict[str, object]:
         "max_bathrooms": req.max_bathrooms,
         "pets_required": req.pets_required,
         "parking_required": req.parking_required,
+        "commute_destination": req.commute_destination,
+        "max_commute_minutes": req.max_commute_minutes,
+        "commute_travel_mode": req.commute_travel_mode,
         "soft_preferences": list(req.soft_preferences),
         "limit": req.limit,
     }
@@ -74,6 +84,17 @@ def _requirements_from_dict(value: object) -> SearchRequirements | None:
         max_bathrooms=value.get("max_bathrooms"),
         pets_required=bool(value.get("pets_required", False)),
         parking_required=bool(value.get("parking_required", False)),
+        commute_destination=(
+            str(value["commute_destination"])
+            if value.get("commute_destination")
+            else None
+        ),
+        max_commute_minutes=value.get("max_commute_minutes"),
+        commute_travel_mode=(
+            str(value["commute_travel_mode"])
+            if value.get("commute_travel_mode")
+            else None
+        ),
         soft_preferences=tuple(
             str(item) for item in (value.get("soft_preferences") or []) if str(item)
         ),
@@ -101,6 +122,10 @@ def _merge_requirements(
     max_bathrooms: float | None,
     pets_required: bool | None,
     parking_required: bool | None,
+    commute_destination: str | None,
+    max_commute_minutes: float | None,
+    commute_travel_mode: str | None,
+    clear_commute: bool,
     soft_preferences: str,
     reset_search: bool,
 ) -> SearchRequirements:
@@ -119,6 +144,19 @@ def _merge_requirements(
         return explicit if explicit is not None else prior_value
 
     prior_soft = prior.soft_preferences if prior else ()
+    destination = None if clear_commute else (
+        commute_destination.strip()
+        if commute_destination and commute_destination.strip()
+        else (prior.commute_destination if prior else None)
+    )
+    commute_mode = None if clear_commute else normalize_travel_mode(commute_travel_mode)
+    if (
+        not clear_commute
+        and commute_mode is None
+        and prior is not None
+        and not commute_travel_mode
+    ):
+        commute_mode = prior.commute_travel_mode
     return SearchRequirements(
         city=effective_city,
         state=(state.strip().upper() or (prior.state if prior else "CA")),
@@ -145,6 +183,13 @@ def _merge_requirements(
             if parking_required is not None
             else (prior.parking_required if prior else False)
         ),
+        commute_destination=destination,
+        max_commute_minutes=(
+            None
+            if clear_commute
+            else numeric(max_commute_minutes, prior.max_commute_minutes if prior else None)
+        ),
+        commute_travel_mode=commute_mode,
         soft_preferences=_merge_soft_preferences(
             prior_soft, soft_preferences, reset_search=reset_search
         ),
@@ -156,6 +201,31 @@ def _listing_from_dict(value: dict[str, Any]) -> Listing:
     names = {item.name for item in fields(Listing)}
     payload = {key: value.get(key) for key in names if key in value}
     return Listing(**payload)
+
+
+def _commute_from_dict(value: object) -> CommuteResult | None:
+    if not isinstance(value, dict) or not value.get("destination"):
+        return None
+    return CommuteResult(
+        destination=str(value["destination"]),
+        destination_place_id=(
+            str(value["destination_place_id"])
+            if value.get("destination_place_id")
+            else None
+        ),
+        mode=str(value["mode"]) if value.get("mode") else None,
+        duration_minutes=(
+            int(value["duration_minutes"])
+            if isinstance(value.get("duration_minutes"), (int, float))
+            else None
+        ),
+        distance_meters=(
+            int(value["distance_meters"])
+            if isinstance(value.get("distance_meters"), (int, float))
+            else None
+        ),
+        status=str(value.get("status") or "unknown"),
+    )
 
 
 def _merge_listing_detail(search_listing: Listing | None, detail: Listing) -> Listing:
@@ -300,7 +370,103 @@ def _active_filters(req: SearchRequirements) -> str:
         parts.append("parking")
     if req.pets_required:
         parts.append("pet-friendly")
+    if req.commute_destination and req.max_commute_minutes is not None:
+        mode = f" {req.commute_travel_mode}" if req.commute_travel_mode else ""
+        parts.append(
+            f"≤{req.max_commute_minutes:g} min{mode} to {req.commute_destination}"
+        )
     return " · ".join(parts)
+
+
+def _compute_commutes(
+    listings: list[Listing], req: SearchRequirements
+) -> dict[str, CommuteResult]:
+    if req.max_commute_minutes is None or not req.commute_destination:
+        return {}
+    mode = normalize_travel_mode(req.commute_travel_mode)
+    results: dict[str, CommuteResult] = {}
+    for listing in listings:
+        if listing.latitude is None or listing.longitude is None:
+            results[listing.id] = CommuteResult(
+                destination=req.commute_destination,
+                mode=mode,
+                status="unknown",
+            )
+    if mode is None:
+        for listing in listings:
+            results.setdefault(
+                listing.id,
+                CommuteResult(
+                    destination=req.commute_destination,
+                    mode=None,
+                    status="unknown",
+                ),
+            )
+        return results
+    origins = [
+        CommuteOrigin(
+            listing_id=listing.id,
+            latitude=listing.latitude,
+            longitude=listing.longitude,
+        )
+        for listing in listings
+        if listing.latitude is not None and listing.longitude is not None
+    ]
+    results.update(
+        get_commute_service().compute_commutes(
+            origins,
+            destination=req.commute_destination,
+            mode=mode,
+        )
+    )
+    return results
+
+
+def _commute_summary(
+    req: SearchRequirements,
+    commutes: dict[str, CommuteResult],
+) -> dict[str, object]:
+    if req.max_commute_minutes is None:
+        return {
+            "status": "not_requested",
+            "evaluated_count": 0,
+            "available_count": 0,
+            "unavailable_count": 0,
+            "unknown_count": 0,
+            "within_limit_count": 0,
+            "over_limit_count": 0,
+        }
+    values = list(commutes.values())
+    available = [item for item in values if item.status == "available"]
+    unavailable_count = sum(item.status == "unavailable" for item in values)
+    unknown_count = sum(item.status == "unknown" for item in values)
+    within_limit_count = sum(
+        item.duration_minutes is not None
+        and item.duration_minutes <= req.max_commute_minutes
+        for item in available
+    )
+    over_limit_count = sum(
+        item.duration_minutes is not None
+        and item.duration_minutes > req.max_commute_minutes
+        for item in available
+    )
+    if values and len(available) == len(values):
+        status = "available"
+    elif available:
+        status = "partial"
+    elif unavailable_count:
+        status = "unavailable"
+    else:
+        status = "unknown"
+    return {
+        "status": status,
+        "evaluated_count": len(values),
+        "available_count": len(available),
+        "unavailable_count": unavailable_count,
+        "unknown_count": unknown_count,
+        "within_limit_count": within_limit_count,
+        "over_limit_count": over_limit_count,
+    }
 
 
 def _short_address(address: str) -> str:
@@ -475,6 +641,10 @@ def search_listings(
     max_bathrooms: float | None = None,
     pets_required: bool | None = None,
     parking_required: bool | None = None,
+    commute_destination: str | None = None,
+    max_commute_minutes: float | None = None,
+    commute_travel_mode: str | None = None,
+    clear_commute: bool = False,
     soft_preferences: str = "",
     reset_search: bool = False,
     force_refresh: bool = False,
@@ -506,9 +676,55 @@ def search_listings(
         max_bathrooms=max_bathrooms,
         pets_required=pets_required,
         parking_required=parking_required,
+        commute_destination=commute_destination,
+        max_commute_minutes=max_commute_minutes,
+        commute_travel_mode=commute_travel_mode,
+        clear_commute=clear_commute,
         soft_preferences=soft_preferences,
         reset_search=reset_search,
     )
+
+    missing_commute_requirements: list[str] = []
+    if req.max_commute_minutes is not None:
+        if not req.commute_destination:
+            missing_commute_requirements.append("commute_destination")
+        if not req.commute_travel_mode:
+            missing_commute_requirements.append("commute_travel_mode")
+    if missing_commute_requirements:
+        if tool_context is not None:
+            tool_context.state[_REQUIREMENTS_STATE_KEY] = _requirements_to_dict(req)
+        return {
+            "status": "requires_input",
+            "missing_requirements": missing_commute_requirements,
+            "provider": "not_called",
+            "data_source": "none",
+            "provider_search_performed": False,
+            "search_complete": True,
+            "failed_sources": [],
+            "refresh_reason": "missing_commute_requirement",
+            "active_filters": _active_filters(req),
+            "matched_count": 0,
+            "posting_count": 0,
+            "property_groups": [],
+            "display_sections": {"cross_listed": [], "other_matches": []},
+            "cross_listed_count": 0,
+            "top_10": [],
+            "top_5": [],
+            "soft_preferences_unverified": list(req.soft_preferences),
+            "commute_evaluations": {},
+            "commute_summary": {
+                "status": "requires_input",
+                "evaluated_count": 0,
+                "available_count": 0,
+                "unavailable_count": 0,
+                "unknown_count": 0,
+                "within_limit_count": 0,
+                "over_limit_count": 0,
+            },
+            "effective_requirements": _requirements_to_dict(req),
+            "memory_used": previous is not None and not reset_search,
+            "verification_candidates": [],
+        }
 
     cached_scope = None
     cached_raw: list[Listing] = []
@@ -558,8 +774,14 @@ def search_listings(
         and _is_narrower_or_equal(req, cached_scope)
     )
     normalized = cached_raw if use_cache else []
+    commutes = _compute_commutes(normalized, req) if use_cache else {}
     ranked = (
-        filter_and_rank(normalized, req, top_n=max(1, len(normalized)))
+        filter_and_rank(
+            normalized,
+            req,
+            top_n=max(1, len(normalized)),
+            commutes=commutes,
+        )
         if use_cache
         else []
     )
@@ -600,7 +822,13 @@ def search_listings(
             refresh_reason = "expanded_or_changed_scope"
         else:
             refresh_reason = "cache_had_no_matches"
-        ranked = filter_and_rank(normalized, req, top_n=max(1, len(normalized)))
+        commutes = _compute_commutes(normalized, req)
+        ranked = filter_and_rank(
+            normalized,
+            req,
+            top_n=max(1, len(normalized)),
+            commutes=commutes,
+        )
         if tool_context is not None:
             tool_context.state[_RAW_CACHE_STATE_KEY] = [item.to_dict() for item in normalized]
             tool_context.state[_CACHE_SCOPE_STATE_KEY] = _requirements_to_dict(req)
@@ -676,6 +904,10 @@ def search_listings(
         "top_10": representative_payload[:10],
         "top_5": representative_payload[:5],
         "soft_preferences_unverified": list(req.soft_preferences),
+        "commute_evaluations": {
+            listing_id: commute.to_dict() for listing_id, commute in commutes.items()
+        },
+        "commute_summary": _commute_summary(req, commutes),
         "effective_requirements": _requirements_to_dict(req),
         "memory_used": previous is not None and not reset_search,
         "verification_candidates": verification_candidates,
@@ -685,6 +917,57 @@ def search_listings(
             "property/source posting or narrows the candidate set."
         ),
     }
+
+
+def get_route_details(
+    listing_id: str,
+    destination: str = "",
+    travel_mode: str = "",
+    tool_context: Optional[ToolContext] = None,
+) -> dict[str, object]:
+    """Compute on-demand route geometry for one already-selected search candidate."""
+    req = None
+    candidates: list[dict[str, Any]] = []
+    if tool_context is not None:
+        req = _requirements_from_dict(tool_context.state.get(_REQUIREMENTS_STATE_KEY))
+        stored = tool_context.state.get(_CANDIDATES_STATE_KEY, [])
+        if isinstance(stored, list):
+            candidates = [item for item in stored if isinstance(item, dict)]
+
+    selected: Listing | None = None
+    for candidate in candidates:
+        listing_payload = candidate.get("listing")
+        if isinstance(listing_payload, dict) and str(listing_payload.get("id")) == listing_id:
+            selected = _listing_from_dict(listing_payload)
+            break
+
+    effective_destination = destination.strip() or (req.commute_destination if req else None)
+    effective_mode = normalize_travel_mode(travel_mode) or (
+        req.commute_travel_mode if req else None
+    )
+    if selected is None or not effective_destination or effective_mode is None:
+        return RouteDetail(
+            listing_id=listing_id,
+            destination=effective_destination or destination.strip(),
+            mode=effective_mode,
+            status="unknown",
+        ).to_dict()
+    if selected.latitude is None or selected.longitude is None:
+        return RouteDetail(
+            listing_id=listing_id,
+            destination=effective_destination,
+            mode=effective_mode,
+            status="unknown",
+        ).to_dict()
+    return get_commute_service().compute_route(
+        CommuteOrigin(
+            listing_id=selected.id,
+            latitude=selected.latitude,
+            longitude=selected.longitude,
+        ),
+        destination=effective_destination,
+        mode=effective_mode,
+    ).to_dict()
 
 
 def get_listing_details(
@@ -706,6 +989,7 @@ def get_listing_details(
             candidates = [item for item in stored if isinstance(item, dict)]
 
     prior_listing = None
+    prior_commute = None
     current_rank = None
     for index, candidate in enumerate(candidates):
         listing_payload = candidate.get("listing")
@@ -713,12 +997,13 @@ def get_listing_details(
             continue
         if str(listing_payload.get("id")) == listing_id:
             prior_listing = _listing_from_dict(listing_payload)
+            prior_commute = _commute_from_dict(candidate.get("commute"))
             rank_value = candidate.get("current_search_rank")
             current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else index + 1
             break
 
     merged = _merge_listing_detail(prior_listing, detail)
-    passes = passes_hard_filters(merged, req) if req is not None else None
+    passes = passes_hard_filters(merged, req, prior_commute) if req is not None else None
 
     unknowns: list[str] = []
     if merged.pets_allowed is None:
@@ -768,6 +1053,12 @@ Memory and search behavior:
 4. If the user says "cheaper" without a new number, do not invent a new hard
    budget. Keep the current budget and add "prefer cheaper" as a soft preference.
    Treat quiet, newer, modern, near transit, or similar language as soft preferences.
+5. A hard commute request must include a destination, maximum minutes, and an explicit
+   travel mode. If search_listings returns status=requires_input, ask only for the
+   listed missing_requirements; the rental provider was not called. Pass complete
+   commute constraints to search_listings so route-matrix enrichment happens before
+   deterministic filtering/ranking. If the user removes commute as a requirement,
+   pass clear_commute=True instead of resetting unrelated rental requirements.
 
 Candidate-first behavior:
 5. For every initial or refined search, call search_listings exactly once. The tool is
@@ -790,6 +1081,9 @@ Candidate-first behavior:
     verification is useful. Never verify the whole candidate set automatically.
 12. A verified candidate with passes_current_hard_filters=false must not be presented
     as satisfying the current hard constraints.
+12a. Use get_route_details only for a selected/specific listing when route geometry or
+     route detail is requested. Never calculate full route polylines for broad results.
+     Commute status unknown/unavailable is not evidence that a hard commute limit passed.
 
 Answer format:
 13. Start every broad-search/refinement answer with exactly these two short lines:
@@ -816,5 +1110,5 @@ Answer format:
 20. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
 
 """.strip(),
-    tools=[search_listings, get_listing_details],
+    tools=[search_listings, get_listing_details, get_route_details],
 )

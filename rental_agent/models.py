@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from rental_agent.commute import CommuteResult
+
 
 @dataclass(frozen=True)
 class SearchRequirements:
@@ -16,6 +18,9 @@ class SearchRequirements:
     max_bathrooms: float | None = None
     pets_required: bool = False
     parking_required: bool = False
+    commute_destination: str | None = None
+    max_commute_minutes: float | None = None
+    commute_travel_mode: str | None = None
     soft_preferences: tuple[str, ...] = ()
     limit: int = 50
 
@@ -357,12 +362,16 @@ class RankedListing:
     score: float
     reasons: tuple[str, ...] = field(default_factory=tuple)
     tradeoffs: tuple[str, ...] = field(default_factory=tuple)
+    commute: CommuteResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "listing": self.listing.to_dict(),
             "backend_listing": self.listing.to_backend_dict(),
             "score": round(self.score, 2),
             "reasons": list(self.reasons),
             "tradeoffs": list(self.tradeoffs),
         }
+        if self.commute is not None:
+            result["commute"] = self.commute.to_dict()
+        return result
