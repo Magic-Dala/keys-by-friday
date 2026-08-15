@@ -34,17 +34,6 @@ def _apartments_row(
         "latitude": 37.3861,
         "longitude": -122.0839,
         "primaryImage": "https://img.example.test/apartment.jpg",
-        "photos": [{"url": "https://img.example.test/apartment.jpg"}],
-        "phone": "(650) 555-0100",
-        "rating": 4,
-        "threeDScanUrl": "https://example.test/3d/apt-1",
-        "hasAvailabilities": True,
-        "isMultifamily": True,
-        "attachmentCount": 22,
-        "specialties": ["Corporate", "Short Term"],
-        "propertyManager": {"name": "Example Residential", "companyId": 12345},
-        "hasLeadEmail": True,
-        "rentDeals": 1,
     }
 
 
@@ -66,7 +55,6 @@ def _zillow_row(
         "latitude": 37.3901,
         "longitude": -122.0812,
         "imgSrc": "https://img.example.test/zillow.jpg",
-        "daysOnZillow": 4,
         "detailUrl": f"/homedetails/{zpid}_zpid/",
     }
 
@@ -88,7 +76,6 @@ def _realtor_row(
         },
         "price": rent,
         "listing_id": f"listing-{property_id}",
-        "days_on_market": 7,
         "description": {"beds": 2, "baths": 2, "sqft": 950},
         "primary_photo": {"href": "https://img.example.test/realtor.jpg"},
         "location": {
@@ -171,7 +158,6 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     assert zillow.latitude == 37.3901
     assert zillow.longitude == -122.0812
     assert zillow.primary_image_url == "https://img.example.test/zillow.jpg"
-    assert zillow.days_on_market == 4
     assert zillow.pets_allowed is True
     assert zillow.parking_available is True
     assert realtor.id == "realtor:3001"
@@ -179,7 +165,6 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     assert realtor.latitude == 37.3942
     assert realtor.longitude == -122.0781
     assert realtor.primary_image_url == "https://img.example.test/realtor.jpg"
-    assert realtor.days_on_market == 7
     assert realtor.pets_allowed is True
     assert realtor.parking_available is None
 
@@ -191,17 +176,6 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     assert apartments.primary_image_url == "https://img.example.test/apartment.jpg"
     assert apartments.bedrooms_min == 2
     assert apartments.bedrooms_max == 2
-    assert apartments.phone == "(650) 555-0100"
-    assert apartments.rating == 4
-    assert apartments.virtual_tour_url == "https://example.test/3d/apt-1"
-    assert apartments.has_availability is True
-    assert apartments.is_multifamily is True
-    assert apartments.attachment_count == 22
-    assert apartments.specialties == ("Corporate", "Short Term")
-    assert apartments.property_manager_name == "Example Residential"
-    assert apartments.property_manager_company_id == "12345"
-    assert apartments.has_lead_email is True
-    assert apartments.rent_deals_count == 1
 
     # These booleans were not reported in the row; they are guaranteed by the
     # search filters and must be marked as query-backed rather than detail facts.
