@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 import httpx
 
+from backend.app.services.agent_service import (
+    _commute_evaluation_from_tool_payload,
+    _normalize_tool_listings,
+)
 from rental_agent import agent as agent_module
 from rental_agent.agent import search_listings
 from rental_agent.commute import (
@@ -347,3 +351,133 @@ def test_clear_commute_preserves_other_requirements() -> None:
     assert merged.commute_destination is None
     assert merged.max_commute_minutes is None
     assert merged.commute_travel_mode is None
+
+
+def test_fake_commute_data_flows_from_agent_search_into_backend_contract(monkeypatch) -> None:
+    class FakeProvider:
+        def search(self, requirements):
+            return [
+                Listing(
+                    id="within",
+                    address="100 Castro St",
+                    city="Mountain View",
+                    state="CA",
+                    zip_code="94041",
+                    latitude=37.3947,
+                    longitude=-122.0780,
+                    rent=3600,
+                    bedrooms=2,
+                    bathrooms=2,
+                    status="active",
+                ),
+                Listing(
+                    id="over",
+                    address="200 Test Ave",
+                    city="Mountain View",
+                    state="CA",
+                    zip_code="94040",
+                    latitude=37.4050,
+                    longitude=-122.1150,
+                    rent=3400,
+                    bedrooms=2,
+                    bathrooms=2,
+                    status="active",
+                ),
+                Listing(
+                    id="unknown",
+                    address="300 Test Blvd",
+                    city="Mountain View",
+                    state="CA",
+                    zip_code="94043",
+                    latitude=37.4200,
+                    longitude=-122.0900,
+                    rent=3200,
+                    bedrooms=2,
+                    bathrooms=2,
+                    status="active",
+                ),
+            ]
+
+        def get_listing(self, listing_id):
+            raise AssertionError("detail lookup is not part of this fake search flow")
+
+        def health(self):
+            return {"ok": True, "provider": "fake-provider"}
+
+    class FakeCommuteService:
+        def compute_commutes(
+            self,
+            origins,
+            *,
+            destination,
+            mode,
+            destination_place_id=None,
+        ):
+            fake = {
+                "within": CommuteResult(
+                    destination=destination,
+                    mode=mode,
+                    duration_minutes=18,
+                    distance_meters=12400,
+                    status="available",
+                    routing_preference="TRAFFIC_AWARE",
+                ),
+                "over": CommuteResult(
+                    destination=destination,
+                    mode=mode,
+                    duration_minutes=42,
+                    distance_meters=28600,
+                    status="available",
+                    routing_preference="TRAFFIC_AWARE",
+                ),
+                "unknown": CommuteResult(
+                    destination=destination,
+                    mode=mode,
+                    status="unknown",
+                    routing_preference="TRAFFIC_AWARE",
+                ),
+            }
+            return {origin.listing_id: fake[origin.listing_id] for origin in origins}
+
+    monkeypatch.setattr(agent_module, "get_provider", lambda: FakeProvider())
+    monkeypatch.setattr(agent_module, "get_commute_service", lambda: FakeCommuteService())
+
+    agent_payload = search_listings(
+        city="Mountain View",
+        max_rent=4000,
+        min_bedrooms=2,
+        commute_destination="Google Mountain View",
+        max_commute_minutes=30,
+        commute_travel_mode="DRIVE",
+    )
+
+    assert agent_payload["matched_count"] == 1
+    assert agent_payload["top_5"][0]["listing"]["id"] == "within"
+    assert agent_payload["top_5"][0]["commute"]["duration_minutes"] == 18
+    assert agent_payload["commute_summary"] == {
+        "status": "partial",
+        "evaluated_count": 3,
+        "available_count": 2,
+        "unavailable_count": 0,
+        "unknown_count": 1,
+        "within_limit_count": 1,
+        "over_limit_count": 1,
+    }
+
+    backend_listings = _normalize_tool_listings(agent_payload, [])
+    backend_evaluation = _commute_evaluation_from_tool_payload(
+        agent_payload["commute_summary"]
+    )
+
+    assert len(backend_listings) == 1
+    assert backend_listings[0].id == "within"
+    assert backend_listings[0].latitude == 37.3947
+    assert backend_listings[0].longitude == -122.0780
+    assert backend_listings[0].commute is not None
+    assert backend_listings[0].commute.durationMinutes == 18
+    assert backend_listings[0].commute.routingPreference == "TRAFFIC_AWARE"
+    assert backend_evaluation is not None
+    assert backend_evaluation.status == "partial"
+    assert backend_evaluation.evaluatedCount == 3
+    assert backend_evaluation.withinLimitCount == 1
+    assert backend_evaluation.overLimitCount == 1
