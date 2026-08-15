@@ -19,10 +19,22 @@ export type RouteSelectionAction =
 
 export const initialRouteSelectionState: RouteSelectionState = { status: "idle", requestId: 0 };
 
-export function mapReadyListings(listings: Listing[]): MapReadyListing[] {
-  return listings.filter((listing): listing is MapReadyListing =>
-    Number.isFinite(listing.latitude) && Number.isFinite(listing.longitude),
+export function hasMapCoordinates(listing: Listing): listing is MapReadyListing {
+  const { latitude, longitude } = listing;
+  return (
+    typeof latitude === "number"
+    && Number.isFinite(latitude)
+    && latitude >= -90
+    && latitude <= 90
+    && typeof longitude === "number"
+    && Number.isFinite(longitude)
+    && longitude >= -180
+    && longitude <= 180
   );
+}
+
+export function mapReadyListings(listings: Listing[]): MapReadyListing[] {
+  return listings.filter(hasMapCoordinates);
 }
 
 export function commutePresentation(commute?: Commute) {

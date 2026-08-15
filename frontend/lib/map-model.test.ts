@@ -43,6 +43,20 @@ describe("mapReadyListings", () => {
       { id: "invalid", latitude: Number.NaN, longitude: -122 },
     ])).toEqual([listing]);
   });
+
+  it("accepts coordinate boundaries and rejects values outside the globe", () => {
+    const validSouthWest = { id: "south-west", latitude: -90, longitude: -180 };
+    const validNorthEast = { id: "north-east", latitude: 90, longitude: 180 };
+
+    expect(mapReadyListings([
+      validSouthWest,
+      validNorthEast,
+      { id: "south", latitude: -90.0001, longitude: 0 },
+      { id: "north", latitude: 90.0001, longitude: 0 },
+      { id: "west", latitude: 0, longitude: -180.0001 },
+      { id: "east", latitude: 0, longitude: 180.0001 },
+    ])).toEqual([validSouthWest, validNorthEast]);
+  });
 });
 
 describe("commutePresentation", () => {

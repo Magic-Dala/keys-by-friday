@@ -36,16 +36,21 @@ describe("useRouteSelection", () => {
 
   it("aborts and ignores an older request when selection changes", async () => {
     let resolveFirst!: (value: SearchResponse) => void;
+    let firstSignal: AbortSignal | undefined;
     vi.mocked(sendChat)
-      .mockImplementationOnce((_request, options) => new Promise((resolve, reject) => {
+      .mockImplementationOnce((_request, options) => new Promise((resolve) => {
         resolveFirst = resolve;
-        options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        firstSignal = options?.signal;
       }))
       .mockResolvedValueOnce(response("two"));
     const { result } = renderHook(() => useRouteSelection("conversation-1"));
     act(() => { void result.current.selectListing(home("one")); });
     await act(() => result.current.selectListing(home("two")));
-    resolveFirst(response("one"));
+    expect(firstSignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveFirst(response("one"));
+      await Promise.resolve();
+    });
     expect(result.current.state).toMatchObject({ selectedListingId: "two", route: { listingId: "two" } });
   });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentMessage } from "@/components/agent-message";
 import { Brand } from "@/components/brand";
@@ -80,6 +80,7 @@ export function RentalSearch() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [commuteEvaluation, setCommuteEvaluation] = useState<CommuteEvaluation>();
   const [mobileResultsView, setMobileResultsView] = useState<"list" | "map">("list");
+  const [highlightedListingId, setHighlightedListingId] = useState<string>();
   const [savedListings, setSavedListings] = useState<Listing[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showComparison, setShowComparison] = useState(false);
@@ -128,6 +129,8 @@ export function RentalSearch() {
 
     const controller = new AbortController();
     requestRef.current?.abort();
+    routeSelection.reset();
+    setHighlightedListingId(undefined);
     requestRef.current = controller;
     setTurns((current) => [...current, { id: turnId("user"), role: "user", text: message }]);
     setDraft("");
@@ -146,6 +149,7 @@ export function RentalSearch() {
       setCommuteEvaluation(response.commuteEvaluation);
       routeSelection.reset();
       setMobileResultsView("list");
+      setHighlightedListingId(undefined);
       setCompareIds([]);
       setShowComparison(false);
       setTurns((current) => [
@@ -175,6 +179,7 @@ export function RentalSearch() {
     setCommuteEvaluation(undefined);
     routeSelection.reset();
     setMobileResultsView("list");
+    setHighlightedListingId(undefined);
     setCompareIds([]);
     setShowComparison(false);
     setMode(undefined);
@@ -209,10 +214,15 @@ export function RentalSearch() {
     setNotice("Added to comparison.");
   }
 
-  function selectOnMap(listing: Listing) {
+  const selectOnMap = useCallback((listing: Listing) => {
+    setHighlightedListingId(undefined);
     setMobileResultsView("map");
     void routeSelection.selectListing(listing);
-  }
+  }, [routeSelection.selectListing]);
+
+  const highlightOnMap = useCallback((listingId?: string) => {
+    setHighlightedListingId(listingId);
+  }, []);
 
   const savedIds = new Set(savedListings.map((listing) => listing.id));
   const knownListings = new Map(
@@ -336,9 +346,11 @@ export function RentalSearch() {
                         saved={savedIds.has(listing.id)}
                         comparisonSelected={compareIds.includes(listing.id)}
                         mapSelected={routeSelection.state.selectedListingId === listing.id}
+                        mapHighlighted={highlightedListingId === listing.id}
                         onSave={toggleSaved}
                         onSelect={toggleComparison}
                         onMapSelect={selectOnMap}
+                        onMapHighlight={highlightOnMap}
                         key={listing.id}
                       />
                     ))}
@@ -368,7 +380,9 @@ export function RentalSearch() {
                       listings={listings}
                       commuteEvaluation={commuteEvaluation}
                       routeState={routeSelection.state}
+                      highlightedListingId={highlightedListingId}
                       onSelectListing={selectOnMap}
+                      onHighlightListing={highlightOnMap}
                       apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}
                       mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}
                     />

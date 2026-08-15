@@ -11,7 +11,9 @@ interface RentalMapProps {
   listings: Listing[];
   commuteEvaluation?: CommuteEvaluation;
   routeState: RouteSelectionState;
+  highlightedListingId?: string;
   onSelectListing: (listing: Listing) => void;
+  onHighlightListing?: (listingId?: string) => void;
   apiKey?: string;
   mapId?: string;
 }
@@ -22,6 +24,22 @@ interface MapRuntime {
   map: google.maps.Map;
   libraries: GoogleMapsLibraries;
 }
+
+interface MarkerRuntime {
+  listing: ReturnType<typeof mapReadyListings>[number];
+  rank: number;
+  marker: google.maps.marker.AdvancedMarkerElement;
+  pin: google.maps.marker.PinElement;
+  selectListing: EventListener;
+  activateWithKeyboard: EventListener;
+  highlightListing: EventListener;
+  clearHighlight: EventListener;
+}
+
+const brandMarkerColor = "#c13f35";
+const neutralMarkerColor = "#1d1d1f";
+const markerContrastColor = "#ffffff";
+const routePadding = { top: 220, right: 64, bottom: 64, left: 64 };
 
 const visuallyHidden: CSSProperties = {
   position: "absolute",
@@ -41,6 +59,10 @@ function listingLabel(listing: Listing): string {
 
 function markerLabel(listing: Listing, rank: number): string {
   return `${rank}. ${listingLabel(listing)} — ${commutePresentation(listing.commute).label}`;
+}
+
+function markerTitle(listing: Listing, rank: number, selected: boolean): string {
+  return `Rank ${rank}: ${listingLabel(listing)}. ${commutePresentation(listing.commute).label}.${selected ? " Selected." : ""}`;
 }
 
 function MapFallback({
@@ -77,13 +99,18 @@ export function RentalMap({
   listings,
   commuteEvaluation,
   routeState,
+  highlightedListingId,
   onSelectListing,
+  onHighlightListing,
   apiKey,
   mapId,
 }: RentalMapProps) {
   const mapElementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map>(null);
-  const polylineRef = useRef<google.maps.Polyline>(null);
+  const markerRuntimesRef = useRef(new Map<string, MarkerRuntime>());
+  const routePolylinesRef = useRef<google.maps.Polyline[]>([]);
+  const onSelectListingRef = useRef(onSelectListing);
+  const onHighlightListingRef = useRef(onHighlightListing);
   const fittedListingIdsRef = useRef<string>(undefined);
   const [runtime, setRuntime] = useState<MapRuntime>();
   const [loaderError, setLoaderError] = useState<string>();
@@ -94,6 +121,11 @@ export function RentalMap({
     [readyListings],
   );
   const selectedListing = listings.find((listing) => listing.id === routeState.selectedListingId);
+
+  useEffect(() => {
+    onSelectListingRef.current = onSelectListing;
+    onHighlightListingRef.current = onHighlightListing;
+  }, [onHighlightListing, onSelectListing]);
 
   useEffect(() => {
     if (!apiKey || readyListings.length === 0 || !mapElementRef.current || mapRef.current) return;
@@ -128,17 +160,23 @@ export function RentalMap({
   useEffect(() => {
     if (!runtime) return;
 
-    const markers = readyListings.map((listing, index) => {
+    readyListings.forEach((listing, index) => {
       const rank = listing.rank ?? index + 1;
-      const pin = new runtime.libraries.PinElement({ glyph: String(rank) });
+      const pin = new runtime.libraries.PinElement({
+        glyphText: String(rank),
+        background: neutralMarkerColor,
+        borderColor: markerContrastColor,
+        glyphColor: markerContrastColor,
+      });
       const marker = new runtime.libraries.AdvancedMarkerElement({
         map: runtime.map,
         position: { lat: listing.latitude, lng: listing.longitude },
         content: pin,
         gmpClickable: true,
-        title: markerLabel(listing, rank),
+        title: markerTitle(listing, rank, false),
+        zIndex: 1,
       });
-      const selectListing = () => onSelectListing(listing);
+      const selectListing = () => onSelectListingRef.current(listing);
       const activateWithKeyboard = (event: Event) => {
         const key = (event as globalThis.KeyboardEvent).key;
         if (key === "Enter" || key === " ") {
@@ -146,11 +184,25 @@ export function RentalMap({
           selectListing();
         }
       };
+      const highlightListing = () => onHighlightListingRef.current?.(listing.id);
+      const clearHighlight = () => onHighlightListingRef.current?.(undefined);
 
       marker.addEventListener("gmp-click", selectListing);
       marker.addEventListener("keydown", activateWithKeyboard);
-
-      return { marker, selectListing, activateWithKeyboard };
+      marker.addEventListener("pointerenter", highlightListing);
+      marker.addEventListener("pointerleave", clearHighlight);
+      marker.addEventListener("focus", highlightListing);
+      marker.addEventListener("blur", clearHighlight);
+      markerRuntimesRef.current.set(listing.id, {
+        listing,
+        rank,
+        marker,
+        pin,
+        selectListing,
+        activateWithKeyboard,
+        highlightListing,
+        clearHighlight,
+      });
     });
 
     if (fittedListingIdsRef.current !== listingIds) {
@@ -166,17 +218,41 @@ export function RentalMap({
     }
 
     return () => {
-      markers.forEach(({ marker, selectListing, activateWithKeyboard }) => {
+      markerRuntimesRef.current.forEach(({
+        marker,
+        selectListing,
+        activateWithKeyboard,
+        highlightListing,
+        clearHighlight,
+      }) => {
         marker.removeEventListener("gmp-click", selectListing);
         marker.removeEventListener("keydown", activateWithKeyboard);
+        marker.removeEventListener("pointerenter", highlightListing);
+        marker.removeEventListener("pointerleave", clearHighlight);
+        marker.removeEventListener("focus", highlightListing);
+        marker.removeEventListener("blur", clearHighlight);
         marker.map = null;
       });
+      markerRuntimesRef.current.clear();
     };
-  }, [listingIds, onSelectListing, readyListings, runtime]);
+  }, [listingIds, readyListings, runtime]);
 
   useEffect(() => {
-    polylineRef.current?.setMap(null);
-    polylineRef.current = null;
+    markerRuntimesRef.current.forEach(({ listing, marker, pin, rank }) => {
+      const selected = listing.id === routeState.selectedListingId;
+      const highlighted = listing.id === highlightedListingId;
+      pin.background = selected ? brandMarkerColor : neutralMarkerColor;
+      pin.borderColor = markerContrastColor;
+      pin.glyphColor = markerContrastColor;
+      pin.scale = highlighted && !selected ? 1.18 : selected ? 1.12 : 1;
+      marker.title = markerTitle(listing, rank, selected);
+      marker.zIndex = selected ? 3 : highlighted ? 2 : 1;
+    });
+  }, [highlightedListingId, listingIds, routeState.selectedListingId, runtime]);
+
+  useEffect(() => {
+    routePolylinesRef.current.forEach((polyline) => polyline.setMap(null));
+    routePolylinesRef.current = [];
     setRouteError(undefined);
 
     const route = routeState.route;
@@ -190,23 +266,44 @@ export function RentalMap({
 
     try {
       const path = runtime.libraries.encoding.decodePath(route.encodedPolyline);
-      const polyline = new google.maps.Polyline({ map: runtime.map, path });
-      polylineRef.current = polyline;
+      const casing = new google.maps.Polyline({
+        map: runtime.map,
+        path,
+        strokeColor: markerContrastColor,
+        strokeOpacity: 0.9,
+        strokeWeight: 9,
+        zIndex: 1,
+      });
+      const foreground = new google.maps.Polyline({
+        map: runtime.map,
+        path,
+        strokeColor: brandMarkerColor,
+        strokeOpacity: 1,
+        strokeWeight: 5,
+        zIndex: 2,
+      });
+      routePolylinesRef.current = [casing, foreground];
 
       if (path.length > 0) {
         const bounds = new google.maps.LatLngBounds();
         path.forEach((position) => bounds.extend(position));
-        runtime.map.fitBounds(bounds, 48);
+        const selectedMapListing = readyListings.find(
+          (listing) => listing.id === routeState.selectedListingId,
+        );
+        if (selectedMapListing) {
+          bounds.extend({ lat: selectedMapListing.latitude, lng: selectedMapListing.longitude });
+        }
+        runtime.map.fitBounds(bounds, routePadding);
       }
     } catch (error: unknown) {
       setRouteError(error instanceof Error ? error.message : "The route line could not be drawn.");
     }
 
     return () => {
-      polylineRef.current?.setMap(null);
-      polylineRef.current = null;
+      routePolylinesRef.current.forEach((polyline) => polyline.setMap(null));
+      routePolylinesRef.current = [];
     };
-  }, [routeState.route, routeState.selectedListingId, routeState.status, runtime]);
+  }, [readyListings, routeState.route, routeState.selectedListingId, routeState.status, runtime]);
 
   const retryRoute = () => {
     if (selectedListing) onSelectListing(selectedListing);

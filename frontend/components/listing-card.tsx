@@ -4,7 +4,7 @@ import {
   ExternalLinkIcon,
   HeartIcon,
 } from "@/components/icons";
-import { commutePresentation } from "@/lib/map-model";
+import { commutePresentation, hasMapCoordinates } from "@/lib/map-model";
 import type { Listing } from "@/types/search";
 
 interface ListingCardProps {
@@ -13,9 +13,11 @@ interface ListingCardProps {
   saved: boolean;
   comparisonSelected: boolean;
   mapSelected: boolean;
+  mapHighlighted: boolean;
   onSave: (listing: Listing) => void;
   onSelect: (listing: Listing) => void;
   onMapSelect: (listing: Listing) => void;
+  onMapHighlight: (listingId?: string) => void;
 }
 
 function formatPrice(price: number | undefined) {
@@ -40,15 +42,15 @@ export function ListingCard({
   saved,
   comparisonSelected,
   mapSelected,
+  mapHighlighted,
   onSave,
   onSelect,
   onMapSelect,
+  onMapHighlight,
 }: ListingCardProps) {
   const score = matchScore(listing.score);
-  const hasMapLocation = Number.isFinite(listing.latitude) && Number.isFinite(listing.longitude);
-  const commute = hasMapLocation
-    ? commutePresentation(listing.commute)
-    : { label: "Map location unavailable", tone: "unknown" as const };
+  const hasMapLocation = hasMapCoordinates(listing);
+  const commute = commutePresentation(listing.commute);
   const reasons = listing.reason
     ?.split(";")
     .map((reason) => reason.trim())
@@ -56,13 +58,19 @@ export function ListingCard({
     .slice(0, 3);
 
   return (
-    <article className={mapSelected ? "listingCard isMapSelected" : "listingCard"}>
+    <article
+      className={`listingCard${mapSelected ? " isMapSelected" : ""}${mapHighlighted ? " isMapHighlighted" : ""}`}
+      onMouseEnter={() => onMapHighlight(listing.id)}
+      onMouseLeave={() => onMapHighlight(undefined)}
+    >
       <button
         className="listingMapTarget"
         type="button"
         aria-label={`Select ${listing.title ?? listing.address ?? "rental home"} on the map and load its route`}
         aria-pressed={mapSelected}
         onClick={() => onMapSelect(listing)}
+        onFocus={() => onMapHighlight(listing.id)}
+        onBlur={() => onMapHighlight(undefined)}
       />
       <div className="listingTopline">
         <span className="rank">#{rank} recommendation</span>
@@ -107,6 +115,8 @@ export function ListingCard({
           <dd className={commute.tone}>{commute.label}</dd>
         </div>
       </dl>
+
+      {!hasMapLocation ? <p className="mapLocationUnavailable">Map location unavailable</p> : null}
 
       {reasons?.length ? (
         <div className="evidenceBlock">

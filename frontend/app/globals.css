@@ -931,6 +931,7 @@ p {
 }
 
 .listingCard:has(.listingMapTarget:focus-visible),
+.listingCard.isMapHighlighted,
 .listingCard.isMapSelected {
   border-color: var(--color-brand);
   box-shadow: 0 0 0 3px var(--color-brand-soft), var(--shadow-panel);
@@ -956,7 +957,7 @@ p {
   to { opacity: 1; transform: translateY(0); }
 }
 
-.listingCard:hover:not(.isMapSelected) {
+.listingCard:hover:not(.isMapSelected):not(.isMapHighlighted) {
   border-color: var(--color-line-strong);
   box-shadow: 0 12px 34px rgba(29, 29, 31, 0.07);
   transform: translateY(-1px);
@@ -1080,6 +1081,13 @@ p {
 .listingFacts dd.unknown::before {
   color: var(--color-ink);
   content: "?";
+}
+
+.mapLocationUnavailable {
+  margin: 12px 0 0;
+  color: var(--color-copy);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .inlineIcon {
