@@ -16,6 +16,13 @@ function listingLabel(listing?: Listing): string {
   return listing?.title ?? listing?.address ?? "this home";
 }
 
+function routingPreferenceLabel(routingPreference?: string): string | undefined {
+  const normalized = routingPreference?.trim().toLowerCase().replaceAll("_", " ");
+  if (!normalized) return undefined;
+  const label = normalized.replace(/^traffic aware\b/, "Traffic-aware");
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)} routing`;
+}
+
 export function RouteSummary({ listing, commuteEvaluation, state, onRetry }: RouteSummaryProps) {
   const label = listingLabel(listing);
   let heading = listing ? `Route for ${label}` : "Compare every commute";
@@ -27,12 +34,16 @@ export function RouteSummary({ listing, commuteEvaluation, state, onRetry }: Rou
       break;
     case "available": {
       const presentation = commutePresentation(state.route);
+      const routingPreference = routingPreferenceLabel(state.route?.routingPreference);
       body = (
-        <p>
-          <strong>{presentation.label}</strong>
-          {presentation.detail ? ` · ${presentation.detail}` : ""}
-          {state.route?.destination ? ` to ${state.route.destination}` : ""}
-        </p>
+        <>
+          <p>
+            <strong>{presentation.label}</strong>
+            {presentation.detail ? ` · ${presentation.detail}` : ""}
+            {state.route?.destination ? ` to ${state.route.destination}` : ""}
+          </p>
+          {routingPreference ? <p>{routingPreference}</p> : null}
+        </>
       );
       break;
     }

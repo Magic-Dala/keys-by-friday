@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 
 import { RouteSummary } from "@/components/route-summary";
 import { loadGoogleMaps } from "@/lib/google-maps";
-import { commutePresentation, mapReadyListings, type MapReadyListing, type RouteSelectionState } from "@/lib/map-model";
+import { commutePresentation, mapReadyListings, type RouteSelectionState } from "@/lib/map-model";
 import type { CommuteEvaluation, Listing } from "@/types/search";
 
 interface RentalMapProps {
@@ -46,28 +46,28 @@ function markerLabel(listing: Listing, rank: number): string {
 function MapFallback({
   listings,
   onSelectListing,
-  error,
+  heading,
+  message,
 }: {
-  listings: MapReadyListing[];
+  listings: Listing[];
   onSelectListing: (listing: Listing) => void;
-  error?: string;
+  heading: string;
+  message: string;
 }) {
   return (
     <div className="mapFallback" role="region" aria-label="Rental map fallback">
-      <h3>{error ? "Map unavailable" : "Map needs a browser key"}</h3>
-      <p>{error ?? "Add a Google Maps browser key to see these homes on the map."}</p>
+      <h3>{heading}</h3>
+      <p>{message}</p>
       <ul>
-        {listings.map((listing, index) => {
-          const rank = listing.rank ?? index + 1;
-          return (
-            <li key={listing.id}>
-              <button type="button" onClick={() => onSelectListing(listing)} aria-label={`Select ${listingLabel(listing)}`}>
-                <strong>{listingLabel(listing)}</strong>
-                <span>{commutePresentation(listing.commute).label}</span>
-              </button>
-            </li>
-          );
-        })}
+        {listings.map((listing) => (
+          <li key={listing.id}>
+            <button type="button" onClick={() => onSelectListing(listing)} aria-label={`Select ${listingLabel(listing)}`}>
+              <strong>{listingLabel(listing)}</strong>
+              {listing.title && listing.address ? <span>{listing.address}</span> : null}
+              <span>{commutePresentation(listing.commute).label}</span>
+            </button>
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -96,7 +96,7 @@ export function RentalMap({
   const selectedListing = listings.find((listing) => listing.id === routeState.selectedListingId);
 
   useEffect(() => {
-    if (!apiKey || !mapElementRef.current || mapRef.current) return;
+    if (!apiKey || readyListings.length === 0 || !mapElementRef.current || mapRef.current) return;
 
     let cancelled = false;
     setLoaderError(undefined);
@@ -123,7 +123,7 @@ export function RentalMap({
     return () => {
       cancelled = true;
     };
-  }, [apiKey, mapId]);
+  }, [apiKey, mapId, readyListings.length]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -208,7 +208,6 @@ export function RentalMap({
     };
   }, [routeState.route, routeState.selectedListingId, routeState.status, runtime]);
 
-  const mapError = loaderError ?? routeError;
   const retryRoute = () => {
     if (selectedListing) onSelectListing(selectedListing);
   };
@@ -217,7 +216,12 @@ export function RentalMap({
     return (
       <section className="rentalMap">
         <RouteSummary listing={selectedListing} commuteEvaluation={commuteEvaluation} state={routeState} onRetry={retryRoute} />
-        <MapFallback listings={readyListings} onSelectListing={onSelectListing} />
+        <MapFallback
+          listings={listings}
+          onSelectListing={onSelectListing}
+          heading="Map needs a browser key"
+          message="Add a Google Maps browser key to see these homes on the map."
+        />
       </section>
     );
   }
@@ -225,8 +229,17 @@ export function RentalMap({
   return (
     <section className="rentalMap">
       <RouteSummary listing={selectedListing} commuteEvaluation={commuteEvaluation} state={routeState} onRetry={retryRoute} />
-      {mapError ? <MapFallback listings={readyListings} onSelectListing={onSelectListing} error={mapError} /> : null}
-      <div ref={mapElementRef} className="mapCanvas" aria-label="Map of recommended rental homes and the selected commute route" />
+      {readyListings.length === 0 ? (
+        <MapFallback
+          listings={listings}
+          onSelectListing={onSelectListing}
+          heading="Map needs home locations"
+          message="These homes do not include coordinates yet, so they cannot be placed on the map."
+        />
+      ) : null}
+      {readyListings.length > 0 && loaderError ? <MapFallback listings={listings} onSelectListing={onSelectListing} heading="Map unavailable" message={loaderError} /> : null}
+      {readyListings.length > 0 && routeError ? <MapFallback listings={listings} onSelectListing={onSelectListing} heading="Route line unavailable" message={routeError} /> : null}
+      <div ref={mapElementRef} className="mapCanvas" hidden={readyListings.length === 0} aria-label="Map of recommended rental homes and the selected commute route" />
       <ul style={visuallyHidden}>
         {readyListings.map((listing, index) => (
           <li key={listing.id}>{markerLabel(listing, listing.rank ?? index + 1)}</li>
