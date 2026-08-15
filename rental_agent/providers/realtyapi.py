@@ -36,6 +36,16 @@ def _number(value: object) -> float | None:
     return None
 
 
+def _canonical_status(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    normalized = re.sub(r"[\s_-]+", "", text.casefold())
+    if normalized in {"active", "forrent", "forlease"}:
+        return "active"
+    return text
+
+
 def _numeric_range(value: object) -> tuple[float | None, float | None]:
     if isinstance(value, dict):
         low = _number(value.get("min") or value.get("minimum") or value.get("low"))
@@ -170,6 +180,54 @@ def _amenities(raw: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
+def _coordinate(raw: dict[str, Any], *keys: str) -> float | None:
+    address = raw.get("address")
+    address_obj = address if isinstance(address, dict) else {}
+    location = raw.get("location")
+    location_obj = location if isinstance(location, dict) else {}
+    for key in keys:
+        value = _number(raw.get(key))
+        if value is None:
+            value = _number(address_obj.get(key))
+        if value is None:
+            value = _number(location_obj.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _primary_image_url(raw: dict[str, Any]) -> str | None:
+    for key in (
+        "primaryImage",
+        "primaryPhoto",
+        "primaryPhotoUrl",
+        "photo",
+        "image",
+        "imageUrl",
+    ):
+        value = raw.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+        if isinstance(value, dict):
+            for nested_key in ("url", "href", "src"):
+                nested = value.get(nested_key)
+                if isinstance(nested, str) and nested.startswith(("http://", "https://")):
+                    return nested
+    for key in ("photos", "images", "photoUrls"):
+        value = raw.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if isinstance(item, str) and item.startswith(("http://", "https://")):
+                return item
+            if isinstance(item, dict):
+                for nested_key in ("url", "href", "src"):
+                    nested = item.get(nested_key)
+                    if isinstance(nested, str) and nested.startswith(("http://", "https://")):
+                        return nested
+    return None
+
+
 def _extract_listing_rows(payload: object) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -197,23 +255,57 @@ def normalize_realtyapi_listing(
     address, city, state, zip_code = _address_parts(raw)
     listing_id = str(raw.get("listingKey") or raw.get("listing_id") or raw.get("id") or "")
 
-    rent = _first_number(raw, "rent", "minRent", "rentMin", "rent_min", "price")
+    rent_min = _first_number(raw, "minRent", "rentMin", "rent_min")
+    rent_max = _first_number(raw, "maxRent", "rentMax", "rent_max")
+    range_min, range_max = _numeric_range(raw.get("rentRange") or raw.get("priceRange"))
+    rent_min = rent_min if rent_min is not None else range_min
+    rent_max = rent_max if rent_max is not None else range_max
+    rent = _first_number(raw, "rent", "price")
+    rent_is_exact = rent is not None
+    if rent_min is not None and rent_max is not None and rent_min > rent_max:
+        rent_min = None
+        rent_max = None
     if rent is None:
-        _, rent_high = _numeric_range(raw.get("rentRange") or raw.get("priceRange"))
-        rent = rent_high
+        rent = rent_max if rent_max is not None else rent_min
+    elif rent_min is None and rent_max is None:
+        rent_min = rent
+        rent_max = rent
 
-    bedrooms = _first_number(raw, "beds", "bedrooms", "minBeds", "bedsMin")
+    bedrooms_min = _first_number(raw, "minBeds", "bedsMin")
+    bedrooms_max = _first_number(raw, "maxBeds", "bedsMax")
+    range_bedrooms_min, range_bedrooms_max = _numeric_range(raw.get("bedRange"))
+    bedrooms_min = bedrooms_min if bedrooms_min is not None else range_bedrooms_min
+    bedrooms_max = bedrooms_max if bedrooms_max is not None else range_bedrooms_max
+    bedrooms = _first_number(raw, "beds", "bedrooms")
+    bedrooms_is_exact = bedrooms is not None
+    if (
+        bedrooms_min is not None
+        and bedrooms_max is not None
+        and bedrooms_min > bedrooms_max
+    ):
+        bedrooms_min = None
+        bedrooms_max = None
     if bedrooms is None:
-        _, bedrooms_high = _numeric_range(raw.get("bedRange"))
-        bedrooms = bedrooms_high
+        # Preserve the existing ranking representative while retaining the real
+        # range separately for backend consumers.
+        bedrooms = bedrooms_max if bedrooms_max is not None else bedrooms_min
+    elif bedrooms_min is None and bedrooms_max is None:
+        bedrooms_min = bedrooms
+        bedrooms_max = bedrooms
 
-    bathrooms = _first_number(raw, "baths", "bathrooms", "minBaths", "bathsMin")
-    if bathrooms is None and requirements is not None:
-        bathrooms = (
-            requirements.min_bathrooms
-            if requirements.min_bathrooms is not None
-            else requirements.max_bathrooms
-        )
+    query_backed_fields: list[str] = []
+    bathrooms = _first_number(raw, "baths", "bathrooms")
+    bathrooms_min_evidence = _first_number(raw, "minBaths", "bathsMin")
+    if (
+        bathrooms is None
+        and bathrooms_min_evidence is None
+        and requirements is not None
+        and requirements.min_bathrooms is not None
+    ):
+        # The search filter proves only a lower bound; do not present it as an
+        # exact provider-reported bathroom count.
+        bathrooms_min_evidence = float(requirements.min_bathrooms)
+        query_backed_fields.append("bathrooms_min_evidence")
 
     square_footage = _first_number(
         raw, "sqft", "squareFeet", "squareFootage", "minSqft", "sqftMin"
@@ -239,14 +331,30 @@ def normalize_realtyapi_listing(
         parking_available = True
     if pets_allowed is None and requirements is not None and requirements.pets_required:
         pets_allowed = True
+        query_backed_fields.append("pets_allowed")
     if (
         parking_available is None
         and requirements is not None
         and requirements.parking_required
     ):
         parking_available = True
+        query_backed_fields.append("parking_available")
 
     year_built_number = _number(raw.get("yearBuilt"))
+    property_manager = raw.get("propertyManager")
+    property_manager_obj = property_manager if isinstance(property_manager, dict) else {}
+    specialties_value = raw.get("specialties")
+    specialties = (
+        tuple(
+            dict.fromkeys(
+                str(item).strip()
+                for item in specialties_value
+                if isinstance(item, str) and item.strip()
+            )
+        )
+        if isinstance(specialties_value, list)
+        else ()
+    )
 
     return Listing(
         id=listing_id,
@@ -257,11 +365,38 @@ def normalize_realtyapi_listing(
         rent=rent,
         bedrooms=bedrooms,
         bathrooms=bathrooms,
+        rent_is_exact=rent_is_exact,
+        bedrooms_is_exact=bedrooms_is_exact,
+        source_listing_id=listing_id or None,
+        country_code=(
+            str(country).strip()
+            if (country := (
+                raw.get("countryCode")
+                or (raw.get("address") or {}).get("countryCode")
+                if isinstance(raw.get("address"), dict)
+                else raw.get("countryCode")
+            )) is not None
+            and str(country).strip()
+            else None
+        ),
+        latitude=_coordinate(raw, "latitude", "lat"),
+        longitude=_coordinate(raw, "longitude", "lon", "lng"),
+        primary_image_url=_primary_image_url(raw),
+        rent_min=rent_min,
+        rent_max=rent_max,
+        bedrooms_min=bedrooms_min,
+        bedrooms_max=bedrooms_max,
+        days_on_market=(
+            int(value)
+            if (value := _first_number(raw, "daysOnMarket", "days_on_market")) is not None
+            else None
+        ),
         property_type=(
             str(raw.get("propertyType")) if raw.get("propertyType") is not None else None
         ),
+        bathrooms_min_evidence=bathrooms_min_evidence,
         square_footage=square_footage,
-        status=None,
+        status=_canonical_status(raw.get("status") or raw.get("listingStatus")),
         listed_date=_parse_datetime(raw.get("listedDate") or raw.get("listingDate")),
         last_seen_date=_parse_datetime(
             raw.get("lastModifiedDate") or raw.get("updatedAt") or raw.get("updated_at")
@@ -286,6 +421,63 @@ def normalize_realtyapi_listing(
         pet_policy=pet_policy,
         parking_policy=parking_policy,
         detail_verified=detail_verified,
+        phone=(
+            str(raw.get("phone")).strip()
+            if isinstance(raw.get("phone"), str) and str(raw.get("phone")).strip()
+            else None
+        ),
+        rating=_number(raw.get("rating")),
+        multimedia_url=(
+            str(raw.get("multimediaUrl")).strip()
+            if isinstance(raw.get("multimediaUrl"), str)
+            and str(raw.get("multimediaUrl")).strip()
+            else None
+        ),
+        virtual_tour_url=(
+            str(raw.get("threeDScanUrl") or raw.get("virtualTourUrl")).strip()
+            if isinstance(raw.get("threeDScanUrl") or raw.get("virtualTourUrl"), str)
+            and str(raw.get("threeDScanUrl") or raw.get("virtualTourUrl")).strip()
+            else None
+        ),
+        has_availability=(
+            raw.get("hasAvailabilities")
+            if isinstance(raw.get("hasAvailabilities"), bool)
+            else None
+        ),
+        is_multifamily=(
+            raw.get("isMultifamily")
+            if isinstance(raw.get("isMultifamily"), bool)
+            else None
+        ),
+        attachment_count=(
+            int(value)
+            if (value := _number(raw.get("attachmentCount"))) is not None
+            else None
+        ),
+        specialties=specialties,
+        property_manager_name=(
+            str(property_manager_obj.get("name")).strip()
+            if isinstance(property_manager_obj.get("name"), str)
+            and str(property_manager_obj.get("name")).strip()
+            else None
+        ),
+        property_manager_company_id=(
+            str(property_manager_obj.get("companyId"))
+            if property_manager_obj.get("companyId") is not None
+            else None
+        ),
+        has_lead_email=(
+            raw.get("hasLeadEmail") if isinstance(raw.get("hasLeadEmail"), bool) else None
+        ),
+        description=(
+            str(raw.get("description")).strip()
+            if isinstance(raw.get("description"), str) and str(raw.get("description")).strip()
+            else None
+        ),
+        rent_deals_count=(
+            int(value) if (value := _number(raw.get("rentDeals"))) is not None else None
+        ),
+        query_backed_fields=tuple(query_backed_fields),
     )
 
 
