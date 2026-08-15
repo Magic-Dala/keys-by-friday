@@ -36,6 +36,7 @@ def test_realtyapi_search_request_construction_auth_and_live_shape_normalization
                         "priceRange": "$2,750 - 3,650",
                         "bedRange": "1 - 2 Beds",
                         "propertyType": "Apartment",
+                        "listingStatus": "For_Rent",
                         "availabilityText": "Available Now",
                         "amenityNames": ["Parking", "Gym"],
                     }
@@ -81,6 +82,7 @@ def test_realtyapi_search_request_construction_auth_and_live_shape_normalization
     assert results[0].bedrooms == 2
     assert results[0].bathrooms is None
     assert results[0].bathrooms_min_evidence == 2
+    assert results[0].status == "active"
     assert "bathrooms_min_evidence" in results[0].query_backed_fields
     assert results[0].pets_allowed is True
     assert results[0].parking_available is True

@@ -52,6 +52,7 @@ def _zillow_row(
         "bedrooms": 2,
         "bathrooms": 2,
         "livingArea": 980,
+        "homeStatus": "FOR_RENT",
         "latitude": 37.3901,
         "longitude": -122.0812,
         "imgSrc": "https://img.example.test/zillow.jpg",
@@ -75,6 +76,7 @@ def _realtor_row(
             }
         },
         "price": rent,
+        "status": "for_rent",
         "listing_id": f"listing-{property_id}",
         "description": {"beds": 2, "baths": 2, "sqft": 950},
         "primary_photo": {"href": "https://img.example.test/realtor.jpg"},
@@ -154,6 +156,7 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     zillow = next(item for item in results if item.source == "realtyapi-zillow")
     realtor = next(item for item in results if item.source == "realtyapi-realtor")
     assert zillow.id == "zillow:2001"
+    assert zillow.status == "active"
     assert zillow.source_listing_id == "2001"
     assert zillow.latitude == 37.3901
     assert zillow.longitude == -122.0812
@@ -161,6 +164,7 @@ def test_search_calls_all_three_sources_and_normalizes_each_source():
     assert zillow.pets_allowed is True
     assert zillow.parking_available is True
     assert realtor.id == "realtor:3001"
+    assert realtor.status == "active"
     assert realtor.source_listing_id == "listing-3001"
     assert realtor.latitude == 37.3942
     assert realtor.longitude == -122.0781

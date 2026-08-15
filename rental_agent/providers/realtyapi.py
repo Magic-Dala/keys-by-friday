@@ -36,6 +36,16 @@ def _number(value: object) -> float | None:
     return None
 
 
+def _canonical_status(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    normalized = re.sub(r"[\s_-]+", "", text.casefold())
+    if normalized in {"active", "forrent", "forlease"}:
+        return "active"
+    return text
+
+
 def _numeric_range(value: object) -> tuple[float | None, float | None]:
     if isinstance(value, dict):
         low = _number(value.get("min") or value.get("minimum") or value.get("low"))
@@ -371,11 +381,7 @@ def normalize_realtyapi_listing(
         ),
         bathrooms_min_evidence=bathrooms_min_evidence,
         square_footage=square_footage,
-        status=(
-            str(raw.get("status") or raw.get("listingStatus")).strip()
-            if raw.get("status") or raw.get("listingStatus")
-            else None
-        ),
+        status=_canonical_status(raw.get("status") or raw.get("listingStatus")),
         listed_date=_parse_datetime(raw.get("listedDate") or raw.get("listingDate")),
         last_seen_date=_parse_datetime(
             raw.get("lastModifiedDate") or raw.get("updatedAt") or raw.get("updated_at")

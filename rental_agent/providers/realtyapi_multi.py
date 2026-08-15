@@ -11,6 +11,7 @@ from rental_agent.models import Listing, SearchRequirements
 from rental_agent.providers.base import ListingProvider
 from rental_agent.providers.realtyapi import (
     RealtyApiProvider,
+    _canonical_status,
     _number,
     _numeric_range,
     _parse_datetime,
@@ -448,7 +449,7 @@ def normalize_zillow_listing(
         bathrooms_min_evidence=bathrooms_min_evidence,
         property_type=_first_text(raw, "homeType", "propertyType", "resoFacts.homeType"),
         square_footage=_first_number(raw, "livingArea", "livingAreaValue", "sqft", "resoFacts.livingArea"),
-        status=_first_text(raw, "homeStatus", "listingStatus", "status"),
+        status=_canonical_status(_first(raw, "homeStatus", "listingStatus", "status")),
         listed_date=_parse_datetime(_first(raw, "datePosted", "listingDate", "listedDate")),
         last_seen_date=_parse_datetime(_first(raw, "lastUpdated", "updatedAt")),
         pets_allowed=pets_allowed,
@@ -554,7 +555,7 @@ def normalize_realtor_listing(
         ),
         property_type=_first_text(raw, "property_type", "propertyType", "description.type"),
         square_footage=_first_number(raw, "sqft", "squareFeet", "description.sqft"),
-        status=_first_text(raw, "status", "listing_status"),
+        status=_canonical_status(_first(raw, "status", "listing_status")),
         listed_date=_parse_datetime(_first(raw, "list_date", "listingDate", "listedDate")),
         last_seen_date=_parse_datetime(_first(raw, "last_update_date", "updatedAt")),
         pets_allowed=pets_allowed,

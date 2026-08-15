@@ -69,6 +69,20 @@ def test_session_memory_inherits_omitted_requirements_and_can_reset(monkeypatch)
 
 def test_detail_verification_merges_search_evidence_and_rechecks_hard_filters(monkeypatch):
     class DetailMockProvider(MockListingProvider):
+        def search(self, requirements):
+            return [
+                replace(
+                    listing,
+                    bathrooms_min_evidence=requirements.min_bathrooms,
+                    query_backed_fields=(
+                        "bathrooms_min_evidence",
+                        "pets_allowed",
+                        "parking_available",
+                    ),
+                )
+                for listing in super().search(requirements)
+            ]
+
         def get_listing(self, listing_id: str) -> Listing:
             base = super().get_listing(listing_id)
             return replace(
@@ -106,6 +120,8 @@ def test_detail_verification_merges_search_evidence_and_rechecks_hard_filters(mo
     assert listing["pet_policy"] == "Cats Allowed; Dogs Allowed"
     assert listing["parking_policy"] == "Covered"
     assert listing["detail_verified"] is True
+    assert listing["bathrooms_min_evidence"] == 2
+    assert listing["query_backed_fields"] == ("bathrooms_min_evidence",)
     assert verification["current_search_rank"] == 1
     assert verification["passes_current_hard_filters"] is True
 
