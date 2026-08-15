@@ -39,7 +39,7 @@ describe("useRouteSelection", () => {
     vi.mocked(sendChat)
       .mockImplementationOnce((_request, options) => new Promise((resolve, reject) => {
         resolveFirst = resolve;
-        options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
       }))
       .mockResolvedValueOnce(response("two"));
     const { result } = renderHook(() => useRouteSelection("conversation-1"));
