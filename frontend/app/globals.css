@@ -224,6 +224,14 @@ p {
   gap: 20px;
 }
 
+.workspace:has(.spatialWorkspace) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace:has(.spatialWorkspace) > .decisionRail {
+  position: static;
+}
+
 .mainPanel {
   min-width: 0;
   min-height: calc(100vh - 122px);
@@ -720,8 +728,7 @@ p {
   content: "Loading route";
 }
 
-.routeSummary-loading::after,
-.routeSpinner {
+.routeSummary-loading::after {
   width: 14px;
   height: 14px;
   border: 2px solid var(--color-brand-soft);
@@ -773,21 +780,33 @@ p {
   to { transform: rotate(360deg); }
 }
 
-.mapFallback,
-.mapLoadError {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  min-width: 0;
-  min-height: 520px;
+.rentalMap:has(.mapFallback) {
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr);
   overflow-y: auto;
-  padding: 174px 24px 24px;
+}
+
+.rentalMap:has(.mapFallback) > .routeSummary {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  max-width: none;
+  margin: 18px 18px 0;
+}
+
+.mapFallback {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 160px;
+  overflow-y: auto;
+  padding: 24px;
   background: var(--color-surface-muted);
   color: var(--color-ink);
 }
 
-.mapFallback h3,
-.mapLoadError h3 {
+.mapFallback h3 {
   margin: 0 0 8px;
   color: var(--color-ink);
   font-size: 20px;
@@ -795,8 +814,7 @@ p {
   letter-spacing: -0.02em;
 }
 
-.mapFallback > p,
-.mapLoadError > p {
+.mapFallback > p {
   margin: 0;
   color: var(--color-copy);
   font-size: 14px;
@@ -804,16 +822,6 @@ p {
   overflow-wrap: anywhere;
 }
 
-.mapLoadError {
-  background: var(--color-danger-soft);
-}
-
-.mapLoadError h3,
-.mapLoadError > p {
-  color: var(--color-danger);
-}
-
-.mapFallbackList,
 .mapFallback ul {
   display: grid;
   gap: 9px;
@@ -822,7 +830,6 @@ p {
   list-style: none;
 }
 
-.mapFallbackList button,
 .mapFallback li button {
   width: 100%;
   min-height: 52px;
@@ -837,20 +844,49 @@ p {
   transition: border-color 160ms ease, background-color 160ms ease;
 }
 
-.mapFallbackList button:hover,
 .mapFallback li button:hover {
   border-color: var(--color-brand);
   background: var(--color-brand-soft);
 }
 
-.mapFallbackList button strong,
 .mapFallback li button strong {
   color: var(--color-ink);
 }
 
-.mapFallbackList button span,
 .mapFallback li button span {
   overflow-wrap: anywhere;
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) {
+  grid-template-rows: auto minmax(520px, 1fr);
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapCanvas:not([hidden]) {
+  z-index: 1;
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapFallback {
+  z-index: 3;
+  width: calc(100% - 32px);
+  max-height: min(42%, 230px);
+  align-self: end;
+  justify-self: center;
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  margin: 16px;
+  padding: 16px;
+  border: 1px solid var(--color-danger);
+  border-radius: 16px;
+  background: var(--color-danger-soft);
+  box-shadow: var(--shadow-float);
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapFallback h3,
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapFallback > p {
+  color: var(--color-danger);
 }
 
 .listingGrid {
@@ -1720,6 +1756,30 @@ p {
     padding: 18px;
   }
 
+  .listingTopline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .listingTopline > .rank {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .listingTopline > .matchScore {
+    grid-row: 1;
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .listingTopline > .mapSelectedLabel {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-left: 0;
+  }
+
   .listingMapTarget {
     inset: 0 0 124px;
   }
@@ -1803,9 +1863,16 @@ p {
     padding: 14px 15px;
   }
 
-  .mapFallback,
-  .mapLoadError {
-    padding: 166px 16px max(20px, env(safe-area-inset-bottom));
+  .rentalMap:has(.mapFallback) > .routeSummary {
+    top: auto;
+    right: auto;
+    left: auto;
+    max-width: none;
+    margin: 12px 12px 0;
+  }
+
+  .mapFallback {
+    padding: 18px 16px max(20px, env(safe-area-inset-bottom));
   }
 }
 
