@@ -30,6 +30,8 @@ class Listing:
     rent: float | None
     bedrooms: float | None
     bathrooms: float | None
+    rent_is_exact: bool | None = None
+    bedrooms_is_exact: bool | None = None
     source_listing_id: str | None = None
     country_code: str | None = None
     latitude: float | None = None
@@ -86,21 +88,58 @@ class Listing:
         def iso(value: datetime | None) -> str | None:
             return value.isoformat() if isinstance(value, datetime) else None
 
-        exact_rent = self.rent
-        if (
+        def canonical_bounds(
+            minimum: float | None, maximum: float | None
+        ) -> tuple[float | None, float | None]:
+            if minimum is not None and maximum is not None and minimum > maximum:
+                return None, None
+            return minimum, maximum
+
+        def canonical_exact(
+            value: float | None,
+            minimum: float | None,
+            maximum: float | None,
+            is_exact: bool | None,
+            bounds_invalid: bool,
+        ) -> float | None:
+            if is_exact is True:
+                return value
+            if bounds_invalid:
+                return None
+            if minimum is not None or maximum is not None:
+                if minimum is not None and maximum is not None and minimum == maximum:
+                    return minimum
+                return None
+            return value
+
+        rent_bounds_invalid = (
             self.rent_min is not None
             and self.rent_max is not None
-            and self.rent_min != self.rent_max
-        ):
-            exact_rent = None
-
-        exact_bedrooms = self.bedrooms
-        if (
+            and self.rent_min > self.rent_max
+        )
+        bedrooms_bounds_invalid = (
             self.bedrooms_min is not None
             and self.bedrooms_max is not None
-            and self.bedrooms_min != self.bedrooms_max
-        ):
-            exact_bedrooms = None
+            and self.bedrooms_min > self.bedrooms_max
+        )
+        rent_min, rent_max = canonical_bounds(self.rent_min, self.rent_max)
+        bedrooms_min, bedrooms_max = canonical_bounds(
+            self.bedrooms_min, self.bedrooms_max
+        )
+        exact_rent = canonical_exact(
+            self.rent,
+            rent_min,
+            rent_max,
+            self.rent_is_exact,
+            rent_bounds_invalid,
+        )
+        exact_bedrooms = canonical_exact(
+            self.bedrooms,
+            bedrooms_min,
+            bedrooms_max,
+            self.bedrooms_is_exact,
+            bedrooms_bounds_invalid,
+        )
 
         sections: dict[str, dict[str, Any]] = {
             "identity": {
@@ -119,13 +158,13 @@ class Listing:
             },
             "pricing": {
                 "rent": exact_rent,
-                "rentMin": self.rent_min,
-                "rentMax": self.rent_max,
+                "rentMin": rent_min,
+                "rentMax": rent_max,
             },
             "property": {
                 "bedrooms": exact_bedrooms,
-                "bedroomsMin": self.bedrooms_min,
-                "bedroomsMax": self.bedrooms_max,
+                "bedroomsMin": bedrooms_min,
+                "bedroomsMax": bedrooms_max,
                 "bathrooms": self.bathrooms,
                 "bathroomsMinEvidence": self.bathrooms_min_evidence,
                 "propertyType": self.property_type,
@@ -208,16 +247,16 @@ class Listing:
             "pricing.rentOrRange": (
                 exact_rent
                 if exact_rent is not None
-                else self.rent_min
-                if self.rent_min is not None
-                else self.rent_max
+                else rent_min
+                if rent_min is not None
+                else rent_max
             ),
             "property.bedroomsOrRange": (
                 exact_bedrooms
                 if exact_bedrooms is not None
-                else self.bedrooms_min
-                if self.bedrooms_min is not None
-                else self.bedrooms_max
+                else bedrooms_min
+                if bedrooms_min is not None
+                else bedrooms_max
             ),
             "property.bathrooms": self.bathrooms
             if self.bathrooms is not None
@@ -276,14 +315,14 @@ class Listing:
                         self.address,
                         exact_rent
                         if exact_rent is not None
-                        else self.rent_min
-                        if self.rent_min is not None
-                        else self.rent_max,
+                        else rent_min
+                        if rent_min is not None
+                        else rent_max,
                         exact_bedrooms
                         if exact_bedrooms is not None
-                        else self.bedrooms_min
-                        if self.bedrooms_min is not None
-                        else self.bedrooms_max,
+                        else bedrooms_min
+                        if bedrooms_min is not None
+                        else bedrooms_max,
                         self.source_url,
                     )
                 ),
@@ -322,6 +361,7 @@ class RankedListing:
     def to_dict(self) -> dict[str, Any]:
         return {
             "listing": self.listing.to_dict(),
+            "backend_listing": self.listing.to_backend_dict(),
             "score": round(self.score, 2),
             "reasons": list(self.reasons),
             "tradeoffs": list(self.tradeoffs),

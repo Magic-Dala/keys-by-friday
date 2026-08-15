@@ -318,6 +318,10 @@ def normalize_zillow_listing(
     rent_min = rent_min if rent_min is not None else range_min
     rent_max = rent_max if rent_max is not None else range_max
     rent = _first_number(raw, "price", "rent", "listPrice", "unformattedPrice")
+    rent_is_exact = rent is not None
+    if rent_min is not None and rent_max is not None and rent_min > rent_max:
+        rent_min = None
+        rent_max = None
     if rent is None:
         rent = rent_min if rent_min is not None else rent_max
     elif rent_min is None and rent_max is None:
@@ -325,6 +329,7 @@ def normalize_zillow_listing(
         rent_max = rent
 
     bedrooms = _first_number(raw, "bedrooms", "beds", "resoFacts.bedrooms")
+    bedrooms_is_exact = bedrooms is not None
     bedrooms_min = bedrooms
     bedrooms_max = bedrooms
     units_group = raw.get("unitsGroup")
@@ -356,13 +361,21 @@ def normalize_zillow_listing(
                 ),
             )
             bedrooms = _number(selected_unit.get("bedrooms"))
+            bedrooms_is_exact = bedrooms is not None
             bedrooms_min = bedrooms
             bedrooms_max = bedrooms
             unit_rent = _number(selected_unit.get("minPrice"))
             if unit_rent is not None:
                 rent = unit_rent
+                rent_is_exact = False
                 rent_min = unit_rent
-                rent_max = _number(selected_unit.get("maxPrice")) or unit_rent
+                rent_max = _number(selected_unit.get("maxPrice"))
+
+    if rent_min is not None and rent_max is not None and rent_min > rent_max:
+        if rent_is_exact is not True:
+            rent = None
+        rent_min = None
+        rent_max = None
 
     query_backed_fields: list[str] = []
     pets_allowed = _structured_pets(raw, amenities)
@@ -412,6 +425,8 @@ def normalize_zillow_listing(
         rent=rent,
         bedrooms=bedrooms,
         bathrooms=bathrooms,
+        rent_is_exact=rent_is_exact,
+        bedrooms_is_exact=bedrooms_is_exact,
         source_listing_id=raw_id,
         country_code=_first_text(
             raw,
@@ -486,6 +501,10 @@ def normalize_realtor_listing(
     rent_min = rent_min if rent_min is not None else range_min
     rent_max = rent_max if rent_max is not None else range_max
     rent = _first_number(raw, "price", "list_price", "listPrice", "rent")
+    rent_is_exact = rent is not None
+    if rent_min is not None and rent_max is not None and rent_min > rent_max:
+        rent_min = None
+        rent_max = None
     if rent is None:
         rent = rent_min if rent_min is not None else rent_max
     elif rent_min is None and rent_max is None:
@@ -514,6 +533,8 @@ def normalize_realtor_listing(
         rent=rent,
         bedrooms=realtor_bedrooms,
         bathrooms=_first_number(raw, "baths", "bathrooms", "description.baths"),
+        rent_is_exact=rent_is_exact,
+        bedrooms_is_exact=realtor_bedrooms is not None,
         source_listing_id=(
             str(value)
             if (value := _first(raw, "listing_id", "listingId")) is not None

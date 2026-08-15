@@ -9,8 +9,13 @@ class SourcePostingResponse(BaseModel):
     label: str | None = None
     url: str | None = None
     price: float | None = None
+    priceMin: float | None = None
+    priceMax: float | None = None
     bedrooms: float | None = None
+    bedroomsMin: float | None = None
+    bedroomsMax: float | None = None
     bathrooms: float | None = None
+    bathroomsMinEvidence: float | None = None
 
 
 class ListingResponse(BaseModel):
@@ -18,8 +23,13 @@ class ListingResponse(BaseModel):
     title: str | None = None
     address: str | None = None
     price: float | None = None
+    priceMin: float | None = None
+    priceMax: float | None = None
     bedrooms: float | None = None
+    bedroomsMin: float | None = None
+    bedroomsMax: float | None = None
     bathrooms: float | None = None
+    bathroomsMinEvidence: float | None = None
     url: str | None = None
     score: float | None = None
     reason: str | None = None

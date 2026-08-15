@@ -163,10 +163,15 @@ def _merge_listing_detail(search_listing: Listing | None, detail: Listing) -> Li
         return detail
     merged = search_listing.to_dict()
     for key, value in detail.to_dict().items():
-        if key == "query_backed_fields":
+        if key in {"query_backed_fields", "rent_is_exact", "bedrooms_is_exact"}:
             continue
         if value is not None and value != "" and value != [] and value != ():
             merged[key] = value
+
+    if detail.rent is not None:
+        merged["rent_is_exact"] = detail.rent_is_exact
+    if detail.bedrooms is not None:
+        merged["bedrooms_is_exact"] = detail.bedrooms_is_exact
 
     query_backed = list(search_listing.query_backed_fields)
     for field_name in tuple(query_backed):
@@ -731,6 +736,7 @@ def get_listing_details(
     }
     result: dict[str, object] = {
         "listing": merged.to_dict(),
+        "backend_listing": merged.to_backend_dict(),
         "verification": verification,
     }
 

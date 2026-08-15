@@ -261,6 +261,10 @@ def normalize_realtyapi_listing(
     rent_min = rent_min if rent_min is not None else range_min
     rent_max = rent_max if rent_max is not None else range_max
     rent = _first_number(raw, "rent", "price")
+    rent_is_exact = rent is not None
+    if rent_min is not None and rent_max is not None and rent_min > rent_max:
+        rent_min = None
+        rent_max = None
     if rent is None:
         rent = rent_max if rent_max is not None else rent_min
     elif rent_min is None and rent_max is None:
@@ -273,6 +277,14 @@ def normalize_realtyapi_listing(
     bedrooms_min = bedrooms_min if bedrooms_min is not None else range_bedrooms_min
     bedrooms_max = bedrooms_max if bedrooms_max is not None else range_bedrooms_max
     bedrooms = _first_number(raw, "beds", "bedrooms")
+    bedrooms_is_exact = bedrooms is not None
+    if (
+        bedrooms_min is not None
+        and bedrooms_max is not None
+        and bedrooms_min > bedrooms_max
+    ):
+        bedrooms_min = None
+        bedrooms_max = None
     if bedrooms is None:
         # Preserve the existing ranking representative while retaining the real
         # range separately for backend consumers.
@@ -282,10 +294,11 @@ def normalize_realtyapi_listing(
         bedrooms_max = bedrooms
 
     query_backed_fields: list[str] = []
-    bathrooms = _first_number(raw, "baths", "bathrooms", "minBaths", "bathsMin")
-    bathrooms_min_evidence = None
+    bathrooms = _first_number(raw, "baths", "bathrooms")
+    bathrooms_min_evidence = _first_number(raw, "minBaths", "bathsMin")
     if (
         bathrooms is None
+        and bathrooms_min_evidence is None
         and requirements is not None
         and requirements.min_bathrooms is not None
     ):
@@ -352,6 +365,8 @@ def normalize_realtyapi_listing(
         rent=rent,
         bedrooms=bedrooms,
         bathrooms=bathrooms,
+        rent_is_exact=rent_is_exact,
+        bedrooms_is_exact=bedrooms_is_exact,
         source_listing_id=listing_id or None,
         country_code=(
             str(country).strip()

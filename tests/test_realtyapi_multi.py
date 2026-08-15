@@ -241,6 +241,12 @@ def test_zillow_search_unwraps_live_property_envelope_and_uses_unit_evidence():
     assert listing.city == "Mountain View"
     assert listing.state == "CA"
     assert listing.rent == 3795
+    canonical = listing.to_backend_dict()
+    assert canonical["pricing"] == {
+        "rent": None,
+        "rentMin": 3795.0,
+        "rentMax": None,
+    }
     assert listing.bedrooms == 2
     assert listing.bathrooms is None
     assert listing.bathrooms_min_evidence == 2
