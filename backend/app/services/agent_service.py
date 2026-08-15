@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -9,6 +11,9 @@ from backend.app.models.search import ListingResponse, SearchResponse, SourcePos
 
 
 _CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
+
+
+logger = logging.getLogger("keys_by_friday.agent")
 
 
 class AgentServiceError(RuntimeError):
@@ -302,10 +307,22 @@ def _normalize_tool_listings(
 
 
 class AgentService:
-    def __init__(self, mode: str | None = None) -> None:
-        self.mode = (mode or get_settings().agent_mode).strip().lower()
+    def __init__(
+        self,
+        mode: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        settings = get_settings()
+        self.mode = (mode or settings.agent_mode).strip().lower()
         if self.mode not in {"adk", "stub"}:
             raise ValueError("AGENT_MODE must be 'adk' or 'stub'.")
+        self.timeout_seconds = (
+            settings.agent_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        if self.timeout_seconds <= 0:
+            raise ValueError("Agent timeout must be greater than zero.")
         self._runner = None
 
     def _get_runner(self):
@@ -325,6 +342,36 @@ class AgentService:
                 listings=[],
                 mode="stub",
             )
+
+        logger.info(
+            "agent request started",
+            extra={"conversation_id": conversation_id, "mode": self.mode},
+        )
+        try:
+            response = await asyncio.wait_for(
+                self._send_adk_message(message, conversation_id),
+                timeout=self.timeout_seconds,
+            )
+        except TimeoutError as exc:
+            logger.warning(
+                "agent request timed out",
+                extra={"conversation_id": conversation_id, "mode": self.mode},
+            )
+            raise AgentServiceError("ADK execution timed out") from exc
+
+        logger.info(
+            "agent request completed",
+            extra={
+                "conversation_id": conversation_id,
+                "mode": self.mode,
+                "listing_count": len(response.listings),
+            },
+        )
+        return response
+
+    async def _send_adk_message(
+        self, message: str, conversation_id: str
+    ) -> SearchResponse:
 
         from google.genai import types
 
@@ -361,6 +408,10 @@ class AgentService:
                         part.text or "" for part in event.content.parts if part.text
                     ).strip()
         except Exception as exc:
+            logger.exception(
+                "agent execution failed",
+                extra={"conversation_id": conversation_id, "mode": self.mode},
+            )
             raise AgentServiceError("ADK execution failed") from exc
 
         if not final_text:
