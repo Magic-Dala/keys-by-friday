@@ -88,6 +88,70 @@ def test_normalize_adk_tool_results_for_web_contract() -> None:
     assert listing.reason == "within budget; matches 2B2B"
 
 
+def test_normalize_preserves_grouped_source_postings_for_web_contract() -> None:
+    search_payload = {
+        "property_groups": [
+            {
+                "rank": 1,
+                "representative": {
+                    "listing": {
+                        "id": "apartments-1",
+                        "address": "100 Castro St",
+                        "rent": 3800,
+                        "bedrooms": 2,
+                        "bathrooms": 2,
+                        "source": "realtyapi-apartments",
+                        "source_url": "https://apartments.example/1",
+                    },
+                    "score": 9.4,
+                    "reasons": ["within budget"],
+                },
+                "postings": [
+                    {
+                        "source_label": "Apartments.com",
+                        "listing": {
+                            "id": "apartments-1",
+                            "source": "realtyapi-apartments",
+                            "source_url": "https://apartments.example/1",
+                            "rent": 3800,
+                            "bedrooms": 2,
+                            "bathrooms": 2,
+                        },
+                    },
+                    {
+                        "source_label": "Zillow",
+                        "listing": {
+                            "id": "zillow:2",
+                            "source": "realtyapi-zillow",
+                            "source_url": "https://zillow.example/2",
+                            "rent": 4000,
+                            "bedrooms": 3,
+                            "bathrooms": 2.5,
+                        },
+                    },
+                ],
+            }
+        ],
+        # The grouped path must win over the legacy representative-only alias.
+        "top_5": [],
+    }
+
+    listings = _normalize_tool_listings(search_payload, [])
+
+    assert len(listings) == 1
+    listing = listings[0]
+    assert listing.id == "apartments-1"
+    assert listing.rank == 1
+    assert [(posting.label, posting.price, posting.bedrooms, posting.bathrooms) for posting in listing.sourcePostings] == [
+        ("Apartments.com", 3800, 2, 2),
+        ("Zillow", 4000, 3, 2.5),
+    ]
+    assert [posting.url for posting in listing.sourcePostings] == [
+        "https://apartments.example/1",
+        "https://zillow.example/2",
+    ]
+
+
 def test_normalize_excludes_detail_verified_hard_filter_failure() -> None:
     search_payload = {
         "top_5": [

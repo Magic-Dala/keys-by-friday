@@ -3,6 +3,16 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+class SourcePostingResponse(BaseModel):
+    id: str
+    source: str | None = None
+    label: str | None = None
+    url: str | None = None
+    price: float | None = None
+    bedrooms: float | None = None
+    bathrooms: float | None = None
+
+
 class ListingResponse(BaseModel):
     id: str
     title: str | None = None
@@ -13,6 +23,8 @@ class ListingResponse(BaseModel):
     url: str | None = None
     score: float | None = None
     reason: str | None = None
+    rank: int | None = None
+    sourcePostings: list[SourcePostingResponse] = Field(default_factory=list)
 
 
 class SearchRequest(BaseModel):

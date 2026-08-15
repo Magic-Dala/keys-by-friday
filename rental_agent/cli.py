@@ -20,6 +20,7 @@ DEFAULT_MODELS = (
     "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,"
     "gemini-3.5-flash,gemini-2.5-flash"
 )
+DEFAULT_SEARCH_MODEL = "gemini-3.7-flash"
 DEFAULT_FRONTEND_PORT = 3000
 DEFAULT_BACKEND_PORT = 8000
 DEFAULT_AGENT_PORT = 8765
@@ -187,6 +188,7 @@ def init_command() -> int:
         existing.get("REALTYAPI_API_KEY"),
     )
     models = existing.get("GEMINI_MODELS") or DEFAULT_MODELS
+    search_model = existing.get("GEMINI_SEARCH_MODEL") or DEFAULT_SEARCH_MODEL
 
     env_path.write_text(
         "\n".join(
@@ -194,6 +196,7 @@ def init_command() -> int:
                 f"GOOGLE_API_KEY={google_key}",
                 "GEMINI_API_KEY=",
                 "GOOGLE_GENAI_USE_VERTEXAI=FALSE",
+                f"GEMINI_SEARCH_MODEL={search_model}",
                 f"GEMINI_MODELS={models}",
                 "LISTING_PROVIDER=realtyapi",
                 f"REALTYAPI_API_KEY={realty_key}",

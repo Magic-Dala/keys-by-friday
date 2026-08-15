@@ -1,4 +1,4 @@
-import type { Listing, SearchRequest, SearchResponse } from "@/types/search";
+import type { Listing, SearchRequest, SearchResponse, SourcePosting } from "@/types/search";
 
 const backendUrl = (
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
@@ -44,6 +44,21 @@ function optionalUrl(value: unknown, field: string): string | undefined {
   throw new ApiError(`Invalid ${field} in API response.`);
 }
 
+function parseSourcePosting(value: unknown): SourcePosting {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    throw new ApiError("Invalid source posting in API response.");
+  }
+  return {
+    id: value.id,
+    source: optionalString(value.source, "source posting source"),
+    label: optionalString(value.label, "source posting label"),
+    url: optionalUrl(value.url, "source posting URL"),
+    price: optionalNumber(value.price, "source posting price"),
+    bedrooms: optionalNumber(value.bedrooms, "source posting bedrooms"),
+    bathrooms: optionalNumber(value.bathrooms, "source posting bathrooms"),
+  };
+}
+
 function parseListing(value: unknown): Listing {
   if (!isRecord(value) || typeof value.id !== "string") {
     throw new ApiError("Invalid listing in API response.");
@@ -59,6 +74,10 @@ function parseListing(value: unknown): Listing {
     url: optionalUrl(value.url, "listing URL"),
     score: optionalNumber(value.score, "listing score"),
     reason: optionalString(value.reason, "listing reason"),
+    rank: optionalNumber(value.rank, "listing rank"),
+    sourcePostings: Array.isArray(value.sourcePostings)
+      ? value.sourcePostings.map(parseSourcePosting)
+      : undefined,
   };
 }
 

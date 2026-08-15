@@ -298,7 +298,7 @@ export function RentalSearch() {
                     {listings.map((listing, index) => (
                       <ListingCard
                         listing={listing}
-                        rank={index + 1}
+                        rank={listing.rank ?? index + 1}
                         saved={savedIds.has(listing.id)}
                         selected={compareIds.includes(listing.id)}
                         onSave={toggleSaved}
