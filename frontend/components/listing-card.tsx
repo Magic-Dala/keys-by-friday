@@ -4,15 +4,18 @@ import {
   ExternalLinkIcon,
   HeartIcon,
 } from "@/components/icons";
+import { commutePresentation } from "@/lib/map-model";
 import type { Listing } from "@/types/search";
 
 interface ListingCardProps {
   listing: Listing;
   rank: number;
   saved: boolean;
-  selected: boolean;
+  comparisonSelected: boolean;
+  mapSelected: boolean;
   onSave: (listing: Listing) => void;
   onSelect: (listing: Listing) => void;
+  onMapSelect: (listing: Listing) => void;
 }
 
 function formatPrice(price: number | undefined) {
@@ -35,11 +38,17 @@ export function ListingCard({
   listing,
   rank,
   saved,
-  selected,
+  comparisonSelected,
+  mapSelected,
   onSave,
   onSelect,
+  onMapSelect,
 }: ListingCardProps) {
   const score = matchScore(listing.score);
+  const hasMapLocation = Number.isFinite(listing.latitude) && Number.isFinite(listing.longitude);
+  const commute = hasMapLocation
+    ? commutePresentation(listing.commute)
+    : { label: "Map location unavailable", tone: "unknown" as const };
   const reasons = listing.reason
     ?.split(";")
     .map((reason) => reason.trim())
@@ -47,9 +56,17 @@ export function ListingCard({
     .slice(0, 3);
 
   return (
-    <article className="listingCard">
+    <article className={mapSelected ? "listingCard isMapSelected" : "listingCard"}>
+      <button
+        className="listingMapTarget"
+        type="button"
+        aria-label={`Select ${listing.title ?? listing.address ?? "rental home"} on the map and load its route`}
+        aria-pressed={mapSelected}
+        onClick={() => onMapSelect(listing)}
+      />
       <div className="listingTopline">
         <span className="rank">#{rank} recommendation</span>
+        {mapSelected ? <span className="mapSelectedLabel">Selected on map</span> : null}
         {score !== undefined ? <span className="matchScore">{score}% match</span> : null}
       </div>
 
@@ -85,6 +102,10 @@ export function ListingCard({
             )}
           </dd>
         </div>
+        <div>
+          <dt>Commute</dt>
+          <dd className={commute.tone}>{commute.label}</dd>
+        </div>
       </dl>
 
       {reasons?.length ? (
@@ -111,13 +132,13 @@ export function ListingCard({
           {saved ? "Saved" : "Save"}
         </button>
         <button
-          className={selected ? "actionButton isActive" : "actionButton"}
+          className={comparisonSelected ? "actionButton isActive" : "actionButton"}
           type="button"
-          aria-pressed={selected}
+          aria-pressed={comparisonSelected}
           onClick={() => onSelect(listing)}
         >
           <CompareIcon className="buttonIcon" />
-          {selected ? "Comparing" : "Compare"}
+          {comparisonSelected ? "Comparing" : "Compare"}
         </button>
         {listing.url ? (
           <a className="sourceLink" href={listing.url} target="_blank" rel="noopener noreferrer">
