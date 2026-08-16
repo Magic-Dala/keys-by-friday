@@ -8,6 +8,8 @@ from typing import Protocol
 
 import httpx
 
+from rental_agent.coordinates import valid_coordinates
+
 
 SUPPORTED_TRAVEL_MODES = {"DRIVE", "BICYCLE", "WALK", "TRANSIT"}
 _MAX_MATRIX_ORIGINS_PER_REQUEST = 100
@@ -201,9 +203,22 @@ class GoogleRoutesService:
                 for origin in origins
             }
         routing_preference = "TRAFFIC_AWARE" if normalized_mode == "DRIVE" else None
-        results: dict[str, CommuteResult] = {}
-        for start in range(0, len(origins), _MAX_MATRIX_ORIGINS_PER_REQUEST):
-            chunk = origins[start : start + _MAX_MATRIX_ORIGINS_PER_REQUEST]
+        valid_origins = [
+            origin for origin in origins if valid_coordinates(origin.latitude, origin.longitude)
+        ]
+        results: dict[str, CommuteResult] = {
+            origin.listing_id: CommuteResult(
+                destination=destination,
+                destination_place_id=destination_place_id,
+                mode=normalized_mode,
+                status="unknown",
+                routing_preference=routing_preference,
+            )
+            for origin in origins
+            if not valid_coordinates(origin.latitude, origin.longitude)
+        }
+        for start in range(0, len(valid_origins), _MAX_MATRIX_ORIGINS_PER_REQUEST):
+            chunk = valid_origins[start : start + _MAX_MATRIX_ORIGINS_PER_REQUEST]
             body = {
                 "origins": [
                     {"waypoint": _waypoint(latitude=item.latitude, longitude=item.longitude)}
@@ -265,6 +280,14 @@ class GoogleRoutesService:
         if normalized_mode is None:
             return RouteDetail(origin.listing_id, destination, None)
         routing_preference = "TRAFFIC_AWARE" if normalized_mode == "DRIVE" else None
+        if not valid_coordinates(origin.latitude, origin.longitude):
+            return RouteDetail(
+                listing_id=origin.listing_id,
+                destination=destination,
+                mode=normalized_mode,
+                status="unknown",
+                routing_preference=routing_preference,
+            )
         body = {
             "origin": _waypoint(latitude=origin.latitude, longitude=origin.longitude),
             "destination": _waypoint(

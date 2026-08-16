@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import math
 from typing import Any
 from uuid import uuid4
 
@@ -26,7 +27,8 @@ def _optional_float(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     return None
 
 
@@ -57,8 +59,12 @@ def _canonical_listing_id(container: dict[str, Any] | None) -> str | None:
     return normalized or None
 
 
-def _commute_from_tool_payload(value: object) -> CommuteResponse | None:
-    if not isinstance(value, dict) or not value.get("destination"):
+def _commute_from_tool_payload(
+    value: object, *, allow_empty_destination: bool = False
+) -> CommuteResponse | None:
+    if not isinstance(value, dict) or "destination" not in value:
+        return None
+    if not allow_empty_destination and not value.get("destination"):
         return None
     status = value.get("status")
     if status not in {"available", "unavailable", "unknown"}:
@@ -116,7 +122,7 @@ def _commute_evaluation_from_tool_payload(
 def _route_from_tool_payload(value: object) -> RouteDetailResponse | None:
     if not isinstance(value, dict) or value.get("listing_id") is None:
         return None
-    commute = _commute_from_tool_payload(value)
+    commute = _commute_from_tool_payload(value, allow_empty_destination=True)
     if commute is None:
         return None
     return RouteDetailResponse(
@@ -465,6 +471,36 @@ class AgentService:
             route=_route_from_tool_payload(route_payload),
             mode="adk",
         )
+
+    async def get_selected_route(
+        self,
+        listing_id: str,
+        conversation_id: str,
+        *,
+        destination: str = "",
+        mode: str = "",
+    ) -> RouteDetailResponse:
+        from rental_agent.agent import _route_details_from_state
+
+        state: object = {}
+        if self.mode == "adk":
+            runner = self._get_runner()
+            try:
+                session = await runner.session_service.get_session(
+                    app_name=runner.app_name,
+                    user_id="web-user",
+                    session_id=conversation_id,
+                )
+            except Exception as exc:
+                raise AgentServiceError("ADK session lookup failed") from exc
+            if session is not None:
+                state = session.state
+
+        payload = _route_details_from_state(listing_id, destination, mode, state)
+        route = _route_from_tool_payload(payload)
+        if route is None:
+            raise AgentServiceError("Route detail normalization failed")
+        return route
 
 
 @lru_cache(maxsize=1)

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from rental_agent.commute import CommuteResult
+from rental_agent.coordinates import normalize_latitude, normalize_longitude
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,10 @@ class Listing:
     description: str | None = None
     rent_deals_count: int | None = None
     query_backed_fields: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "latitude", normalize_latitude(self.latitude))
+        object.__setattr__(self, "longitude", normalize_longitude(self.longitude))
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

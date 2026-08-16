@@ -919,18 +919,21 @@ def search_listings(
     }
 
 
-def get_route_details(
+def _route_details_from_state(
     listing_id: str,
-    destination: str = "",
-    travel_mode: str = "",
-    tool_context: Optional[ToolContext] = None,
+    destination: str,
+    travel_mode: str,
+    state: object,
 ) -> dict[str, object]:
-    """Compute on-demand route geometry for one already-selected search candidate."""
-    req = None
+    state_get = getattr(state, "get", None)
+    req = (
+        _requirements_from_dict(state_get(_REQUIREMENTS_STATE_KEY))
+        if callable(state_get)
+        else None
+    )
     candidates: list[dict[str, Any]] = []
-    if tool_context is not None:
-        req = _requirements_from_dict(tool_context.state.get(_REQUIREMENTS_STATE_KEY))
-        stored = tool_context.state.get(_CANDIDATES_STATE_KEY, [])
+    if callable(state_get):
+        stored = state_get(_CANDIDATES_STATE_KEY, [])
         if isinstance(stored, list):
             candidates = [item for item in stored if isinstance(item, dict)]
 
@@ -942,8 +945,10 @@ def get_route_details(
             break
 
     effective_destination = destination.strip() or (req.commute_destination if req else None)
-    effective_mode = normalize_travel_mode(travel_mode) or (
-        req.commute_travel_mode if req else None
+    effective_mode = (
+        normalize_travel_mode(travel_mode)
+        if travel_mode.strip()
+        else (req.commute_travel_mode if req else None)
     )
     if selected is None or not effective_destination or effective_mode is None:
         return RouteDetail(
@@ -968,6 +973,17 @@ def get_route_details(
         destination=effective_destination,
         mode=effective_mode,
     ).to_dict()
+
+
+def get_route_details(
+    listing_id: str,
+    destination: str = "",
+    travel_mode: str = "",
+    tool_context: Optional[ToolContext] = None,
+) -> dict[str, object]:
+    """Compute on-demand route geometry for one already-selected search candidate."""
+    state = tool_context.state if tool_context is not None else {}
+    return _route_details_from_state(listing_id, destination, travel_mode, state)
 
 
 def get_listing_details(

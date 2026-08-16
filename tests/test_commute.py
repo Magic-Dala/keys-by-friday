@@ -156,6 +156,59 @@ def test_google_routes_selected_route_uses_traffic_aware_drive() -> None:
     assert route.encoded_polyline == "abc123"
 
 
+def test_google_routes_rejects_invalid_coordinates_without_http_request() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise AssertionError("invalid coordinates must not reach Google Routes")
+
+    service = GoogleRoutesService(
+        "test-key", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+    for latitude, longitude in [
+        (float("nan"), -122.1),
+        (float("inf"), -122.1),
+        (999, -122.1),
+        (37.4, -999),
+    ]:
+        route = service.compute_route(
+            CommuteOrigin("invalid", latitude, longitude),
+            destination="Google Mountain View",
+            mode="DRIVE",
+        )
+        assert route.status == "unknown"
+
+    assert calls == []
+
+
+def test_listing_coordinate_normalization_keeps_canonical_map_ready_false() -> None:
+    cases = [
+        ("NaN", -122.1),
+        ("inf", -122.1),
+        (999, -122.1),
+        (37.4, -999),
+        (None, -122.1),
+        (37.4, None),
+        (True, -122.1),
+    ]
+    for latitude, longitude in cases:
+        listing = Listing(
+            id="invalid",
+            address="100 Test St",
+            city="Mountain View",
+            state="CA",
+            zip_code="94040",
+            latitude=latitude,  # type: ignore[arg-type]
+            longitude=longitude,  # type: ignore[arg-type]
+            rent=3500,
+            bedrooms=2,
+            bathrooms=2,
+        )
+        assert listing.to_backend_dict()["completeness"]["mapReady"] is False
+
+
 def test_route_matrix_chunks_at_100_origins_for_transit() -> None:
     calls: list[httpx.Request] = []
 

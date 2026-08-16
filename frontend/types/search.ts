@@ -39,6 +39,13 @@ export interface RouteDetail extends Commute {
   encodedPolyline?: string;
 }
 
+export interface SelectedRouteRequest {
+  listingId: string;
+  conversationId: string;
+  destination?: string;
+  mode?: string;
+}
+
 export interface Listing {
   id: string;
   title?: string;

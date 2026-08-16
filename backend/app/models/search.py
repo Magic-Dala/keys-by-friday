@@ -45,6 +45,29 @@ class RouteDetailResponse(CommuteResponse):
     encodedPolyline: str | None = None
 
 
+class SelectedRouteRequest(BaseModel):
+    listingId: str = Field(min_length=1, max_length=256)
+    conversationId: str = Field(min_length=1, max_length=128)
+    destination: str | None = Field(default=None, max_length=512)
+    mode: str | None = Field(default=None, max_length=32)
+
+    @field_validator("listingId", "conversationId")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @field_validator("destination", "mode")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
 class ListingResponse(BaseModel):
     id: str
     title: str | None = None

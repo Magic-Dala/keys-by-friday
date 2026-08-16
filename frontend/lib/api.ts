@@ -3,6 +3,7 @@ import type {
   CommuteEvaluation,
   Listing,
   RouteDetail,
+  SelectedRouteRequest,
   SearchRequest,
   SearchResponse,
   SourcePosting,
@@ -227,4 +228,38 @@ export async function sendChat(
     throw new ApiError("Backend returned invalid JSON.");
   }
   return parseSearchResponse(payload);
+}
+
+export async function getSelectedRoute(
+  request: SelectedRouteRequest,
+  options: { signal?: AbortSignal } = {},
+): Promise<RouteDetail> {
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/route`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      cache: "no-store",
+      signal: options.signal,
+    });
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "AbortError") throw caught;
+    throw new ApiError("Can’t reach the route service. Check that the backend is running.");
+  }
+
+  if (!response.ok) {
+    throw new ApiError(await errorMessage(response), response.status);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ApiError("Backend returned invalid route JSON.");
+  }
+  return parseRouteDetail(payload);
 }

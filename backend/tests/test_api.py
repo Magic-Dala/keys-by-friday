@@ -267,3 +267,57 @@ def test_chat_maps_agent_failure_to_stable_gateway_error() -> None:
         assert response.json() == {"detail": "Rental agent is temporarily unavailable."}
     finally:
         app.dependency_overrides.clear()
+
+
+def test_selected_route_http_contract() -> None:
+    class FakeRouteService:
+        async def get_selected_route(
+            self,
+            listing_id: str,
+            conversation_id: str,
+            *,
+            destination: str = "",
+            mode: str = "",
+        ):
+            assert listing_id == "listing-1"
+            assert conversation_id == "conversation-1"
+            assert destination == "Google Mountain View"
+            assert mode == "DRIVE"
+            return _route_from_tool_payload(
+                {
+                    "listing_id": listing_id,
+                    "destination": destination,
+                    "mode": mode,
+                    "duration_minutes": 18,
+                    "distance_meters": 12400,
+                    "encoded_polyline": "abc123",
+                    "status": "available",
+                    "routing_preference": "TRAFFIC_AWARE",
+                }
+            )
+
+    app.dependency_overrides[get_agent_service] = lambda: FakeRouteService()
+    try:
+        response = TestClient(app).post(
+            "/api/route",
+            json={
+                "listingId": "listing-1",
+                "conversationId": "conversation-1",
+                "destination": "Google Mountain View",
+                "mode": "DRIVE",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "listingId": "listing-1",
+            "destination": "Google Mountain View",
+            "destinationPlaceId": None,
+            "mode": "DRIVE",
+            "durationMinutes": 18,
+            "distanceMeters": 12400,
+            "status": "available",
+            "routingPreference": "TRAFFIC_AWARE",
+            "encodedPolyline": "abc123",
+        }
+    finally:
+        app.dependency_overrides.clear()
