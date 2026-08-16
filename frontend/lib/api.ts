@@ -1,4 +1,13 @@
-import type { Listing, SearchRequest, SearchResponse, SourcePosting } from "@/types/search";
+import type {
+  Commute,
+  CommuteEvaluation,
+  Listing,
+  RouteDetail,
+  SelectedRouteRequest,
+  SearchRequest,
+  SearchResponse,
+  SourcePosting,
+} from "@/types/search";
 
 const backendUrl = (
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
@@ -59,6 +68,66 @@ function parseSourcePosting(value: unknown): SourcePosting {
   };
 }
 
+function parseCommute(value: unknown): Commute {
+  if (!isRecord(value) || typeof value.destination !== "string") {
+    throw new ApiError("Invalid commute in API response.");
+  }
+  if (
+    value.status !== "available" &&
+    value.status !== "unavailable" &&
+    value.status !== "unknown"
+  ) {
+    throw new ApiError("Invalid commute status in API response.");
+  }
+  return {
+    destination: value.destination,
+    destinationPlaceId: optionalString(
+      value.destinationPlaceId,
+      "commute destination place ID",
+    ),
+    mode: optionalString(value.mode, "commute mode"),
+    durationMinutes: optionalNumber(value.durationMinutes, "commute duration"),
+    distanceMeters: optionalNumber(value.distanceMeters, "commute distance"),
+    status: value.status,
+    routingPreference: optionalString(value.routingPreference, "commute routing preference"),
+  };
+}
+
+function parseCommuteEvaluation(value: unknown): CommuteEvaluation {
+  if (!isRecord(value)) throw new ApiError("Invalid commute evaluation in API response.");
+  const statuses = [
+    "not_requested",
+    "requires_input",
+    "available",
+    "partial",
+    "unavailable",
+    "unknown",
+  ] as const;
+  if (!statuses.includes(value.status as (typeof statuses)[number])) {
+    throw new ApiError("Invalid commute evaluation status in API response.");
+  }
+  return {
+    status: value.status as CommuteEvaluation["status"],
+    evaluatedCount: optionalNumber(value.evaluatedCount, "commute evaluated count") ?? 0,
+    availableCount: optionalNumber(value.availableCount, "commute available count") ?? 0,
+    unavailableCount: optionalNumber(value.unavailableCount, "commute unavailable count") ?? 0,
+    unknownCount: optionalNumber(value.unknownCount, "commute unknown count") ?? 0,
+    withinLimitCount: optionalNumber(value.withinLimitCount, "commute within-limit count") ?? 0,
+    overLimitCount: optionalNumber(value.overLimitCount, "commute over-limit count") ?? 0,
+  };
+}
+
+function parseRouteDetail(value: unknown): RouteDetail {
+  if (!isRecord(value) || typeof value.listingId !== "string") {
+    throw new ApiError("Invalid route detail in API response.");
+  }
+  return {
+    ...parseCommute(value),
+    listingId: value.listingId,
+    encodedPolyline: optionalString(value.encodedPolyline, "route encoded polyline"),
+  };
+}
+
 function parseListing(value: unknown): Listing {
   if (!isRecord(value) || typeof value.id !== "string") {
     throw new ApiError("Invalid listing in API response.");
@@ -71,6 +140,8 @@ function parseListing(value: unknown): Listing {
     price: optionalNumber(value.price, "listing price"),
     bedrooms: optionalNumber(value.bedrooms, "listing bedrooms"),
     bathrooms: optionalNumber(value.bathrooms, "listing bathrooms"),
+    latitude: optionalNumber(value.latitude, "listing latitude"),
+    longitude: optionalNumber(value.longitude, "listing longitude"),
     url: optionalUrl(value.url, "listing URL"),
     score: optionalNumber(value.score, "listing score"),
     reason: optionalString(value.reason, "listing reason"),
@@ -78,6 +149,10 @@ function parseListing(value: unknown): Listing {
     sourcePostings: Array.isArray(value.sourcePostings)
       ? value.sourcePostings.map(parseSourcePosting)
       : undefined,
+    commute:
+      value.commute === undefined || value.commute === null
+        ? undefined
+        : parseCommute(value.commute),
   };
 }
 
@@ -97,6 +172,14 @@ function parseSearchResponse(value: unknown): SearchResponse {
     conversationId: value.conversationId,
     message: value.message,
     listings: value.listings.map(parseListing),
+    commuteEvaluation:
+      value.commuteEvaluation === undefined || value.commuteEvaluation === null
+        ? undefined
+        : parseCommuteEvaluation(value.commuteEvaluation),
+    route:
+      value.route === undefined || value.route === null
+        ? undefined
+        : parseRouteDetail(value.route),
     mode: value.mode,
   };
 }
@@ -145,4 +228,38 @@ export async function sendChat(
     throw new ApiError("Backend returned invalid JSON.");
   }
   return parseSearchResponse(payload);
+}
+
+export async function getSelectedRoute(
+  request: SelectedRouteRequest,
+  options: { signal?: AbortSignal } = {},
+): Promise<RouteDetail> {
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/route`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      cache: "no-store",
+      signal: options.signal,
+    });
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "AbortError") throw caught;
+    throw new ApiError("Can’t reach the route service. Check that the backend is running.");
+  }
+
+  if (!response.ok) {
+    throw new ApiError(await errorMessage(response), response.status);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ApiError("Backend returned invalid route JSON.");
+  }
+  return parseRouteDetail(payload);
 }

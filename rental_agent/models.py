@@ -4,6 +4,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from rental_agent.commute import CommuteResult
+from rental_agent.coordinates import normalize_latitude, normalize_longitude
+
 
 @dataclass(frozen=True)
 class SearchRequirements:
@@ -16,6 +19,9 @@ class SearchRequirements:
     max_bathrooms: float | None = None
     pets_required: bool = False
     parking_required: bool = False
+    commute_destination: str | None = None
+    max_commute_minutes: float | None = None
+    commute_travel_mode: str | None = None
     soft_preferences: tuple[str, ...] = ()
     limit: int = 50
 
@@ -73,6 +79,10 @@ class Listing:
     description: str | None = None
     rent_deals_count: int | None = None
     query_backed_fields: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "latitude", normalize_latitude(self.latitude))
+        object.__setattr__(self, "longitude", normalize_longitude(self.longitude))
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -357,12 +367,16 @@ class RankedListing:
     score: float
     reasons: tuple[str, ...] = field(default_factory=tuple)
     tradeoffs: tuple[str, ...] = field(default_factory=tuple)
+    commute: CommuteResult | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "listing": self.listing.to_dict(),
             "backend_listing": self.listing.to_backend_dict(),
             "score": round(self.score, 2),
             "reasons": list(self.reasons),
             "tradeoffs": list(self.tradeoffs),
         }
+        if self.commute is not None:
+            result["commute"] = self.commute.to_dict()
+        return result

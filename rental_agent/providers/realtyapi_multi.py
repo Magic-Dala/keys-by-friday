@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable, TypeVar
 import httpx
 
 from rental_agent.models import Listing, SearchRequirements
+from rental_agent.coordinates import normalize_latitude, normalize_longitude
 from rental_agent.providers.base import ListingProvider
 from rental_agent.providers.realtyapi import (
     RealtyApiProvider,
@@ -435,20 +436,20 @@ def normalize_zillow_listing(
             "address.country",
             "location.address.country_code",
         ),
-        latitude=_first_number(
+        latitude=normalize_latitude(_first_number(
             raw,
             "latitude",
             "latLong.latitude",
             "coordinate.latitude",
             "location.latitude",
-        ),
-        longitude=_first_number(
+        )),
+        longitude=normalize_longitude(_first_number(
             raw,
             "longitude",
             "latLong.longitude",
             "coordinate.longitude",
             "location.longitude",
-        ),
+        )),
         primary_image_url=_primary_image_url(
             raw, "imgSrc", "primaryPhoto", "photos", "images"
         ),
@@ -547,21 +548,21 @@ def normalize_realtor_listing(
             "location.address.country",
             "address.countryCode",
         ),
-        latitude=_first_number(
+        latitude=normalize_latitude(_first_number(
             raw,
             "latitude",
             "coordinate.lat",
             "location.coordinate.lat",
             "location.address.coordinate.lat",
-        ),
-        longitude=_first_number(
+        )),
+        longitude=normalize_longitude(_first_number(
             raw,
             "longitude",
             "coordinate.lon",
             "coordinate.lng",
             "location.coordinate.lon",
             "location.address.coordinate.lon",
-        ),
+        )),
         primary_image_url=_primary_image_url(
             raw, "primary_photo", "photo", "photos", "images"
         ),

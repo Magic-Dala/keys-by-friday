@@ -18,6 +18,56 @@ class SourcePostingResponse(BaseModel):
     bathroomsMinEvidence: float | None = None
 
 
+class CommuteResponse(BaseModel):
+    destination: str
+    destinationPlaceId: str | None = None
+    mode: str | None = None
+    durationMinutes: int | None = None
+    distanceMeters: int | None = None
+    status: Literal["available", "unavailable", "unknown"]
+    routingPreference: str | None = None
+
+
+class CommuteEvaluationResponse(BaseModel):
+    status: Literal[
+        "not_requested", "requires_input", "available", "partial", "unavailable", "unknown"
+    ]
+    evaluatedCount: int = 0
+    availableCount: int = 0
+    unavailableCount: int = 0
+    unknownCount: int = 0
+    withinLimitCount: int = 0
+    overLimitCount: int = 0
+
+
+class RouteDetailResponse(CommuteResponse):
+    listingId: str
+    encodedPolyline: str | None = None
+
+
+class SelectedRouteRequest(BaseModel):
+    listingId: str = Field(min_length=1, max_length=256)
+    conversationId: str = Field(min_length=1, max_length=128)
+    destination: str | None = Field(default=None, max_length=512)
+    mode: str | None = Field(default=None, max_length=32)
+
+    @field_validator("listingId", "conversationId")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @field_validator("destination", "mode")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
 class ListingResponse(BaseModel):
     id: str
     title: str | None = None
@@ -30,11 +80,14 @@ class ListingResponse(BaseModel):
     bedroomsMax: float | None = None
     bathrooms: float | None = None
     bathroomsMinEvidence: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     url: str | None = None
     score: float | None = None
     reason: str | None = None
     rank: int | None = None
     sourcePostings: list[SourcePostingResponse] = Field(default_factory=list)
+    commute: CommuteResponse | None = None
 
 
 class SearchRequest(BaseModel):
@@ -62,4 +115,6 @@ class SearchResponse(BaseModel):
     conversationId: str
     message: str
     listings: list[ListingResponse] = Field(default_factory=list)
+    commuteEvaluation: CommuteEvaluationResponse | None = None
+    route: RouteDetailResponse | None = None
     mode: Literal["adk", "stub"]

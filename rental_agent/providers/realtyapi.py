@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from rental_agent.models import Listing, SearchRequirements
+from rental_agent.coordinates import normalize_latitude, normalize_longitude
 from rental_agent.providers.base import ListingProvider
 
 
@@ -379,8 +380,8 @@ def normalize_realtyapi_listing(
             and str(country).strip()
             else None
         ),
-        latitude=_coordinate(raw, "latitude", "lat"),
-        longitude=_coordinate(raw, "longitude", "lon", "lng"),
+        latitude=normalize_latitude(_coordinate(raw, "latitude", "lat")),
+        longitude=normalize_longitude(_coordinate(raw, "longitude", "lon", "lng")),
         primary_image_url=_primary_image_url(raw),
         rent_min=rent_min,
         rent_max=rent_max,
