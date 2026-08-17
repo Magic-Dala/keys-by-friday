@@ -128,7 +128,7 @@ export function RentalMap({
   }, [onHighlightListing, onSelectListing]);
 
   useEffect(() => {
-    if (!apiKey || readyListings.length === 0 || !mapElementRef.current || mapRef.current) return;
+    if (!apiKey || !mapId || readyListings.length === 0 || !mapElementRef.current || mapRef.current) return;
 
     let cancelled = false;
     setLoaderError(undefined);
@@ -309,15 +309,15 @@ export function RentalMap({
     if (selectedListing) onSelectListing(selectedListing);
   };
 
-  if (!apiKey) {
+  if (!apiKey || !mapId) {
     return (
       <section className="rentalMap">
         <RouteSummary listing={selectedListing} commuteEvaluation={commuteEvaluation} state={routeState} onRetry={retryRoute} />
         <MapFallback
           listings={listings}
           onSelectListing={onSelectListing}
-          heading="Map needs a browser key"
-          message="Add a Google Maps browser key to see these homes on the map."
+          heading="Map needs browser configuration"
+          message="Add both a Google Maps browser key and Map ID to see these homes on the map."
         />
       </section>
     );

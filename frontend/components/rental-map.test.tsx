@@ -108,10 +108,18 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("shows an honest configuration fallback and real commute facts without a public key", () => {
   render(<RentalMap listings={listings} routeState={initialRouteSelectionState} onSelectListing={vi.fn()} apiKey="" mapId="DEMO_MAP_ID" />);
-  expect(screen.getByText("Map needs a browser key")).toBeVisible();
+  expect(screen.getByText("Map needs browser configuration")).toBeVisible();
   expect(screen.getByText("Heatherstone")).toBeVisible();
   expect(screen.getByText("877 Heatherstone Way")).toBeVisible();
   expect(screen.getByText("18 min drive")).toBeVisible();
+});
+
+it("shows the configuration fallback and skips Maps loading when the Map ID is missing", () => {
+  render(<RentalMap listings={listings} routeState={initialRouteSelectionState} onSelectListing={vi.fn()} apiKey="browser-key" />);
+
+  expect(screen.getByText("Map needs browser configuration")).toBeVisible();
+  expect(screen.getByText(/browser key and Map ID/i)).toBeVisible();
+  expect(loadGoogleMapsMock).not.toHaveBeenCalled();
 });
 
 it("lets fallback rows select the same listing route", async () => {
