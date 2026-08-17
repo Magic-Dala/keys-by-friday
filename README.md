@@ -183,6 +183,7 @@ GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 | `docs/deployment.md` | macOS, Docker, and Cloud Run backend deployment |
 | `docs/authentication.md` | Firebase identity setup and Milestone 2 tests |
 | `docs/maps.md` | Google Routes / commute setup and testing |
+| `docs/firestore.md` | Firestore repositories, shortlist persistence, and Milestone 3 tests |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |

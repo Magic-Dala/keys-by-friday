@@ -14,6 +14,7 @@ Next.js Frontend
 → POST /api/chat
 → FastAPI Backend
 → Verified Firebase uid
+→ Firestore repositories for conversation metadata and shortlists
 → AgentService
 → Google ADK Rental Agent
 → RealtyAPI / Apartments.com
@@ -83,13 +84,20 @@ Next.js Frontend
 - ✅ Conversation ownership rejects cross-user reuse with HTTP 403
 - ✅ Authorization header enabled in the backend CORS policy
 - ✅ Authentication configuration included in readiness checks
+- ✅ Backend Firestore client factory and repository interfaces
+- ✅ Durable conversation ownership and normalized result metadata
+- ✅ Backend-owned shortlist save, list, and remove APIs
+- ✅ Shortlist snapshots preserve structured coordinate and commute evidence
+- ✅ Fake in-memory repositories cover persistence without cloud quota in CI
+- ✅ Firestore client rules deny direct browser access
 
 ## In Progress / Next Product Work
 
 - 🔄 Improve frontend rental-result UX beyond the basic listing cards
 - 🔄 Run a live Google Routes smoke test with a restricted Maps key
 - 🔄 Present structured commute/map evidence in the product frontend
-- 🔄 Comparison and shortlist workflows remain later product work
+- 🔄 Comparison UX exists; richer shortlist notes and cross-session ADK restoration remain later work
+- 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 
@@ -97,7 +105,7 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current integration work:
 
-- ✅ Python / Backend / Agent tests: 112 passed, including Firebase auth, commute integration, and cross-user isolation
+- ✅ Python / Backend / Agent tests: 122 passed, including Firebase auth, Firestore repositories, Maps integration, and cross-user isolation
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
@@ -125,8 +133,7 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
   unknown or unavailable and must not be guessed by Gemini.
 - Natural-language destination resolution has not yet been validated with a
   live key; Places API was intentionally not added by the Maps boundary PR.
-- Persistent shortlist / comparison workflows are not complete.
-- Conversation ownership and ADK sessions are still process memory; Firestore persistence is not complete.
+- Shortlists and conversation metadata are persistent, but the full ADK session/transcript is still process memory.
 - Background monitoring and landlord outreach are outside the current MVP.
 
 ## Update Rule

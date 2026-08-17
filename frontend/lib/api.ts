@@ -7,6 +7,8 @@ import type {
   SelectedRouteRequest,
   SearchRequest,
   SearchResponse,
+  ShortlistItem,
+  ShortlistResponse,
   SourcePosting,
 } from "@/types/search";
 
@@ -185,6 +187,30 @@ function parseSearchResponse(value: unknown): SearchResponse {
   };
 }
 
+function parseShortlistItem(value: unknown): ShortlistItem {
+  if (
+    !isRecord(value) ||
+    typeof value.sourceConversationId !== "string" ||
+    typeof value.savedAt !== "string" ||
+    typeof value.updatedAt !== "string"
+  ) {
+    throw new ApiError("Invalid shortlist item in API response.");
+  }
+  return {
+    listing: parseListing(value.listing),
+    sourceConversationId: value.sourceConversationId,
+    savedAt: value.savedAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
+function parseShortlistResponse(value: unknown): ShortlistResponse {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new ApiError("Invalid shortlist response.");
+  }
+  return { items: value.items.map(parseShortlistItem) };
+}
+
 async function errorMessage(response: Response): Promise<string> {
   try {
     const payload: unknown = await response.json();
@@ -278,4 +304,62 @@ export async function getSelectedRoute(
     throw new ApiError("Backend returned invalid route JSON.");
   }
   return parseRouteDetail(payload);
+}
+
+export async function getShortlist(
+  options: { signal?: AbortSignal } = {},
+): Promise<ShortlistResponse> {
+  const headers = await authenticatedHeaders();
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/shortlist`, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+      signal: options.signal,
+    });
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "AbortError") throw caught;
+    throw new ApiError("Can’t reach shortlist storage. Check that the backend is running.");
+  }
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  return parseShortlistResponse(await response.json());
+}
+
+export async function saveShortlistItem(
+  listingId: string,
+  conversationId: string,
+): Promise<ShortlistItem> {
+  const headers = await authenticatedHeaders();
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/shortlist`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ listingId, conversationId }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new ApiError("Can’t reach shortlist storage. Check that the backend is running.");
+  }
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  return parseShortlistItem(await response.json());
+}
+
+export async function removeShortlistItem(listingId: string): Promise<void> {
+  const headers = await authenticatedHeaders();
+  let response: Response;
+  try {
+    response = await fetch(
+      `${backendUrl}/api/shortlist/${encodeURIComponent(listingId)}`,
+      {
+        method: "DELETE",
+        headers,
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new ApiError("Can’t reach shortlist storage. Check that the backend is running.");
+  }
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
 }

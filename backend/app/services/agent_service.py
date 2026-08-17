@@ -18,6 +18,13 @@ from backend.app.models.search import (
     SearchResponse,
     SourcePostingResponse,
 )
+from backend.app.repositories.base import (
+    ConversationNotFoundError,
+    ConversationOwnershipError,
+    ConversationRepository,
+    RepositoryError,
+)
+from backend.app.repositories.dependencies import get_conversation_repository
 
 
 _CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
@@ -32,6 +39,10 @@ class AgentServiceError(RuntimeError):
 
 class ConversationAccessError(AgentServiceError):
     """A user attempted to continue a conversation owned by another user."""
+
+
+class PersistenceUnavailableError(AgentServiceError):
+    """Conversation metadata persistence could not complete safely."""
 
 
 _LOG_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
@@ -496,6 +507,7 @@ class AgentService:
         self,
         mode: str | None = None,
         timeout_seconds: float | None = None,
+        conversation_repository: ConversationRepository | None = None,
     ) -> None:
         settings = get_settings()
         self.mode = (mode or settings.agent_mode).strip().lower()
@@ -511,8 +523,13 @@ class AgentService:
                 "Agent timeout must be a finite number greater than zero."
             )
         self._runner = None
-        self._conversation_owners: dict[str, str] = {}
-        self._conversation_lock = asyncio.Lock()
+        if conversation_repository is None:
+            from backend.app.repositories.memory import (
+                MemoryConversationRepository,
+            )
+
+            conversation_repository = MemoryConversationRepository()
+        self._conversations = conversation_repository
 
     def _get_runner(self):
         if self._runner is None:
@@ -525,14 +542,50 @@ class AgentService:
     async def _claim_conversation(
         self, conversation_id: str, user_id: str
     ) -> None:
-        async with self._conversation_lock:
-            owner = self._conversation_owners.get(conversation_id)
-            if owner is None:
-                self._conversation_owners[conversation_id] = user_id
-            elif owner != user_id:
-                raise ConversationAccessError(
-                    "Conversation is owned by a different user."
-                )
+        try:
+            await self._conversations.claim(conversation_id, user_id)
+        except ConversationOwnershipError as exc:
+            raise ConversationAccessError(
+                "Conversation is owned by a different user."
+            ) from exc
+        except RepositoryError as exc:
+            raise PersistenceUnavailableError(
+                "Conversation metadata could not be stored."
+            ) from exc
+
+    async def _record_conversation_response(
+        self,
+        response: SearchResponse,
+        *,
+        user_id: str,
+    ) -> None:
+        try:
+            await self._conversations.record_response(
+                response.conversationId,
+                user_id,
+                listings=[
+                    listing.model_dump(mode="json")
+                    for listing in response.listings
+                ],
+                commute_status=(
+                    response.commuteEvaluation.status
+                    if response.commuteEvaluation is not None
+                    else None
+                ),
+                route_listing_id=(
+                    response.route.listingId
+                    if response.route is not None
+                    else None
+                ),
+            )
+        except ConversationOwnershipError as exc:
+            raise ConversationAccessError(
+                "Conversation is owned by a different user."
+            ) from exc
+        except (ConversationNotFoundError, RepositoryError) as exc:
+            raise PersistenceUnavailableError(
+                "Conversation metadata could not be updated."
+            ) from exc
 
     async def send_message(
         self,
@@ -544,12 +597,14 @@ class AgentService:
         conversation_id = conversation_id or str(uuid4())
         await self._claim_conversation(conversation_id, user_id)
         if self.mode == "stub":
-            return SearchResponse(
+            response = SearchResponse(
                 conversationId=conversation_id,
                 message=f"Development stub is active. received: {message}",
                 listings=[],
                 mode="stub",
             )
+            await self._record_conversation_response(response, user_id=user_id)
+            return response
 
         started = time.perf_counter()
         logger.info(
@@ -574,6 +629,7 @@ class AgentService:
             )
             raise AgentServiceError("ADK execution timed out") from exc
 
+        await self._record_conversation_response(response, user_id=user_id)
         logger.info(
             "agent request completed",
             extra={
@@ -711,4 +767,6 @@ class AgentService:
 
 @lru_cache(maxsize=1)
 def get_agent_service() -> AgentService:
-    return AgentService()
+    return AgentService(
+        conversation_repository=get_conversation_repository()
+    )

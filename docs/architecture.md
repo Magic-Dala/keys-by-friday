@@ -11,9 +11,9 @@ Browser
 → POST /api/chat or /api/route with Firebase ID token
 → FastAPI Backend
 → Firebase Admin token verification
-→ AgentService
-→ Google ADK Rental Agent
-→ Rental Provider
+→ FastAPI services and repository interfaces
+  ├→ AgentService → Google ADK Rental Agent → Rental Provider / Google Routes
+  └→ Firestore → conversation metadata and user shortlist
 ```
 
 ## Responsibilities
@@ -33,6 +33,7 @@ Browser
 - map the web contract to the ADK runtime
 - normalize Agent output for the frontend
 - verify Firebase identity and bind conversations to the verified uid
+- persist conversation metadata and shortlist snapshots through repository interfaces
 
 The backend is an adapter, not a second rental-decision engine.
 
@@ -54,6 +55,8 @@ The backend is an adapter, not a second rental-decision engine.
 - Frontend does not import Google ADK or Python modules.
 - Backend does not duplicate Agent search, ranking, or provider logic.
 - Backend never trusts a user ID supplied by browser data.
+- Frontend never accesses Firestore directly; it uses authenticated FastAPI routes.
+- Firestore persistence does not duplicate Agent, provider, ranking, or Maps logic.
 - Agent does not depend on Next.js or frontend-specific UI types.
 - Provider-specific details should not leak through every layer.
 - Add a new framework or service only when it creates a real capability or authority boundary.

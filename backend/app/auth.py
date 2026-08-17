@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from backend.app.config import Settings, get_settings
+from backend.app.firebase import FirebaseAdminUnavailable, get_firebase_admin_app
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,25 +30,6 @@ class AuthenticationServiceUnavailable(RuntimeError):
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-@lru_cache(maxsize=4)
-def _firebase_app(project_id: str):
-    try:
-        import firebase_admin
-
-        app_name = f"keys-by-friday-{project_id}"
-        try:
-            return firebase_admin.get_app(name=app_name)
-        except ValueError:
-            return firebase_admin.initialize_app(
-                options={"projectId": project_id},
-                name=app_name,
-            )
-    except Exception as exc:
-        raise AuthenticationServiceUnavailable(
-            "Firebase Admin could not be initialized."
-        ) from exc
-
-
 def _verify_firebase_id_token_sync(token: str, project_id: str) -> dict[str, Any]:
     try:
         from firebase_admin import auth as firebase_auth
@@ -60,8 +41,12 @@ def _verify_firebase_id_token_sync(token: str, project_id: str) -> dict[str, Any
     try:
         claims = firebase_auth.verify_id_token(
             token,
-            app=_firebase_app(project_id),
+            app=get_firebase_admin_app(project_id),
         )
+    except FirebaseAdminUnavailable as exc:
+        raise AuthenticationServiceUnavailable(
+            "Firebase Admin could not be initialized."
+        ) from exc
     except AuthenticationServiceUnavailable:
         raise
     except (

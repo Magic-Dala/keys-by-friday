@@ -62,6 +62,40 @@ Authorization: Bearer <Firebase-ID-token>
 The selected-route request uses an existing `conversationId`. It is protected by
 the same verified Firebase identity and cross-user conversation check as chat.
 
+## Shortlist
+
+All shortlist routes require the Firebase ID token when Firebase authentication
+is enabled.
+
+```http
+GET /api/shortlist
+Authorization: Bearer <Firebase-ID-token>
+```
+
+Returns the verified user's saved listing snapshots.
+
+```http
+POST /api/shortlist
+Authorization: Bearer <Firebase-ID-token>
+Content-Type: application/json
+
+{
+  "listingId": "listing-from-the-latest-response",
+  "conversationId": "source-conversation-id"
+}
+```
+
+The backend loads the listing snapshot from that user's persisted conversation
+metadata. It does not trust a listing object supplied by the browser. Success
+returns HTTP `201` and the saved item.
+
+```http
+DELETE /api/shortlist/{url-encoded-listing-id}
+Authorization: Bearer <Firebase-ID-token>
+```
+
+Removal is idempotent and returns HTTP `204`.
+
 ## Listing
 
 ```ts
@@ -84,6 +118,8 @@ The backend may normalize internal Agent fields into this web shape.
 
 - `/api/chat` is the primary user interaction endpoint.
 - `/api/route` may read only the verified user's conversation state.
+- `/api/shortlist` may read or change only the verified user's shortlist.
+- The frontend never reads or writes Firestore directly.
 - Frontend does not depend on ADK internals.
 - `adk` is the normal real-Agent mode.
 - `stub` is explicit development/testing mode only.

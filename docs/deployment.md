@@ -24,6 +24,7 @@ From the repository root, test without external API keys:
 APP_ENV=local \
 AGENT_MODE=stub \
 AUTH_MODE=disabled \
+PERSISTENCE_MODE=memory \
 LISTING_PROVIDER=mock \
 uv run --extra backend uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -88,6 +89,7 @@ docker run --rm \
   -e APP_ENV=local \
   -e AGENT_MODE=stub \
   -e AUTH_MODE=disabled \
+  -e PERSISTENCE_MODE=memory \
   -e LISTING_PROVIDER=mock \
   keys-by-friday-backend:local
 ```
@@ -133,6 +135,7 @@ export KBF_REGION='us-west1'
 export KBF_SERVICE='keys-by-friday-backend-1'
 export KBF_FRONTEND_ORIGIN='http://localhost:3000'
 export KBF_SERVICE_ACCOUNT="kbf-backend@${KBF_PROJECT_ID}.iam.gserviceaccount.com"
+export KBF_INVOKER_EMAIL="$(gcloud config get-value account)"
 ```
 
 These values are configuration, not secrets.
@@ -148,6 +151,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
+  firestore.googleapis.com \
   aiplatform.googleapis.com \
   routes.googleapis.com
 ```
@@ -161,12 +165,20 @@ gcloud iam service-accounts create kbf-backend \
 gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
   --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
   --role='roles/aiplatform.user'
+
+gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
+  --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
+  --role='roles/datastore.user'
 ```
 
 The `Vertex AI User` role lets this backend identity call Gemini through Vertex
 AI. Cloud Run automatically supplies credentials for its attached service
 account, so do not create a Gemini API key and do not set
 `GOOGLE_APPLICATION_CREDENTIALS` in Cloud Run.
+
+The `Cloud Datastore User` role is Firestore's application read/write role. It
+allows the backend service account to store conversation metadata and each
+verified user's shortlist without granting index-administration access.
 
 ## Store external API keys in Secret Manager
 
@@ -199,10 +211,19 @@ gcloud secrets add-iam-policy-binding kbf-google-maps-api-key \
 
 ## Deploy to Cloud Run
 
-Milestone 2 allows browsers to reach Cloud Run, then protects conversation APIs
-with verified Firebase ID tokens. `--allow-unauthenticated` means Cloud Run IAM
-does not require a Google employee/developer account; it does not bypass the
-FastAPI authentication required by `/api/chat` and `/api/route`.
+Keep the Cloud Run service private for this milestone. Firebase verifies who owns
+a conversation, but anonymous Firebase users are inexpensive to create and do
+not prevent an attacker from repeatedly consuming Gemini, RealtyAPI, or Routes
+quota. Cloud Run IAM therefore remains the outer deployment boundary until the
+public path has distributed rate limiting, aggregate cost caps, and abuse
+monitoring.
+
+This gives the backend two different identity checks during private testing:
+
+```text
+Cloud Run IAM token  → may this developer/service invoke the private service?
+Firebase ID token    → which product user owns this conversation/shortlist?
+```
 
 From the repository root:
 
@@ -212,7 +233,7 @@ gcloud run deploy "$KBF_SERVICE" \
   --project "$KBF_PROJECT_ID" \
   --region "$KBF_REGION" \
   --service-account "$KBF_SERVICE_ACCOUNT" \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --port 8080 \
   --cpu 1 \
   --memory 1Gi \
@@ -220,8 +241,30 @@ gcloud run deploy "$KBF_SERVICE" \
   --min-instances 0 \
   --max-instances 1 \
   --timeout 180 \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
   --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1'
+```
+
+Grant only your current Google account permission to invoke the private demo
+service:
+
+```bash
+gcloud run services add-iam-policy-binding "$KBF_SERVICE" \
+  --project "$KBF_PROJECT_ID" \
+  --region "$KBF_REGION" \
+  --member="user:${KBF_INVOKER_EMAIL}" \
+  --role='roles/run.invoker'
+```
+
+If an earlier revision was public, remove any legacy `allUsers` Invoker binding:
+
+```bash
+gcloud run services remove-iam-policy-binding "$KBF_SERVICE" \
+  --project "$KBF_PROJECT_ID" \
+  --region "$KBF_REGION" \
+  --member='allUsers' \
+  --role='roles/run.invoker' \
+  --all
 ```
 
 This command bills Gemini usage to Vertex AI in `KBF_PROJECT_ID`. It does not
@@ -233,15 +276,16 @@ required for live commute summaries and selected-route geometry. Restrict this
 key to the Google Routes API in Google Cloud Console. See `docs/maps.md` for the
 local and deployed Maps checks.
 
-Before making this change on an existing service, confirm that Firebase is
-enabled, `AUTH_MODE=firebase`, and the frontend sends Firebase ID tokens. Monitor
-Gemini, RealtyAPI, and Google Routes quotas because anonymous Firebase identities
-are not a substitute for future rate limiting and abuse controls.
+Before making a later service public, confirm that Firebase is enabled and that
+the frontend sends Firebase ID tokens, then add server-side distributed limits
+for each uid plus an aggregate project-level cap. Provider quotas and billing
+alerts are additional safeguards; a billing alert alone does not stop requests.
 
-`max-instances=1` reduces the chance that an in-memory conversation is split
-across instances. It does not make sessions durable: a restart or scale-to-zero
-event still removes current ADK session state. Persistent sessions are a later
-milestone.
+Firestore now keeps conversation ownership/metadata and shortlists across
+instances. `max-instances=1` still reduces the chance that the current in-memory
+ADK session is split across instances. A restart or scale-to-zero event can
+still remove full Agent conversation state; metadata persistence is not the same
+as ADK session persistence.
 
 After deployment, configure an HTTP startup/readiness probe for `/ready` and an
 HTTP liveness probe for `/health` in the Cloud Run console under **Containers,
@@ -263,21 +307,66 @@ Test health and readiness:
 
 ```bash
 curl -i "$KBF_BACKEND_URL/health"
-curl -i "$KBF_BACKEND_URL/ready"
 ```
 
-Confirm that a request without a Firebase token is rejected:
+The desired result is an HTTP `401` or `403` generated by Cloud Run because the
+request has no Cloud Run identity token. It should not reach FastAPI.
+
+Create a short-lived Cloud Run identity token for the developer account that has
+the Invoker role:
+
+```bash
+export KBF_CLOUD_RUN_TOKEN="$(gcloud auth print-identity-token)"
+```
+
+This developer token is only for a short manual smoke test. Production
+service-to-service callers should use a service-account ID token whose audience
+is the Cloud Run service URL.
+
+Now the platform should allow health and readiness requests through to FastAPI:
 
 ```bash
 curl -i \
+  -H "Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
+  "$KBF_BACKEND_URL/health"
+
+curl -i \
+  -H "Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
+  "$KBF_BACKEND_URL/ready"
+```
+
+Confirm that FastAPI still rejects a chat request without a Firebase token. Use
+`X-Serverless-Authorization` for the Cloud Run token so the normal
+`Authorization` header remains available to Firebase authentication:
+
+```bash
+curl -i \
+  -H "X-Serverless-Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d '{"message":"2B2B under $4,000 in Mountain View"}' \
   "$KBF_BACKEND_URL/api/chat"
 ```
 
-The desired response is HTTP `401`. Test a real rental search through the
-Firebase-configured frontend so it supplies a valid token. Follow
-`docs/authentication.md` for the browser check and conversation-isolation tests.
+The desired response is FastAPI HTTP `401` with `A valid sign-in token is
+required.` A fully authenticated command-line request needs both headers:
+
+```text
+X-Serverless-Authorization: Bearer <Cloud Run identity token>
+Authorization: Bearer <Firebase ID token>
+```
+
+Do not paste either token into source files, documentation, screenshots, or chat.
+Clear the short-lived shell value when testing is complete:
+
+```bash
+unset KBF_CLOUD_RUN_TOKEN
+```
+
+The current Next.js browser calls FastAPI directly and cannot mint a Cloud Run
+IAM token. Therefore, keep browser end-to-end testing local for now. A hosted
+browser flow needs an approved public edge such as a server-side frontend proxy
+or load balancer/gateway with abuse controls; Firebase authentication alone is
+not that edge.
 
 View recent application and platform logs:
 

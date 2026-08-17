@@ -1,10 +1,12 @@
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.app.api.routes import router
 from backend.app.config import Settings, get_settings
 from backend.app.observability import configure_logging, install_request_logging
 from backend.app.readiness import readiness_report
+from backend.app.repositories.base import RepositoryUnavailableError
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -16,7 +18,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.frontend_origin],
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["DELETE", "GET", "POST"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
         expose_headers=["X-Request-ID"],
     )
@@ -24,6 +26,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app, google_cloud_project=settings.google_cloud_project
     )
     app.include_router(router, prefix="/api")
+
+    @app.exception_handler(RepositoryUnavailableError)
+    async def repository_unavailable(
+        request: Request, exc: RepositoryUnavailableError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Persistence is temporarily unavailable."},
+        )
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
