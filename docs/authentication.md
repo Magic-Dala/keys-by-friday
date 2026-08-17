@@ -235,8 +235,8 @@ FIREBASE_PROJECT_ID=${KBF_PROJECT_ID}
 
 The Cloud Run service may remain reachable with `--allow-unauthenticated`.
 That option permits browsers to reach the FastAPI server; FastAPI still requires
-and verifies a Firebase token on `/api/chat`. Health and readiness endpoints stay
-available for Cloud Run probes.
+and verifies a Firebase token on `/api/chat` and `/api/route`. Health and
+readiness endpoints stay available for Cloud Run probes.
 
 As a deployment guardrail, `APP_ENV=production` with `AUTH_MODE=disabled` makes
 `/ready` fail and makes `/api/chat` return HTTP `503`. This prevents a missing

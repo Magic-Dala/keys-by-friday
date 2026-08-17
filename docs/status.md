@@ -17,6 +17,7 @@ Next.js Frontend
 → AgentService
 → Google ADK Rental Agent
 → RealtyAPI / Apartments.com
+→ Google Routes when commute is requested and configured
 → Agent response
 ```
 
@@ -49,6 +50,13 @@ Next.js Frontend
 - ✅ Top-3 detail verification
 - ✅ Search/detail merge and hard-filter revalidation
 - ✅ Source-backed final recommendation text
+- ✅ Listing latitude/longitude preserved through the Agent → backend contract
+- ✅ Google Route Matrix summaries for complete commute requirements
+- ✅ Deterministic hard commute filtering before ranking
+- ✅ Explicit `unknown` / `unavailable` commute states instead of guessed passes
+- ✅ On-demand `POST /api/route` selected-listing geometry contract
+- ✅ Firebase ownership protection on both `/api/chat` and `/api/route`
+- ✅ Ordinary rental search remains available when Maps is not configured
 
 ### Development Foundation
 
@@ -79,7 +87,8 @@ Next.js Frontend
 ## In Progress / Next Product Work
 
 - 🔄 Improve frontend rental-result UX beyond the basic listing cards
-- 🔄 Add deterministic commute / Maps evidence when prioritized
+- 🔄 Run a live Google Routes smoke test with a restricted Maps key
+- 🔄 Present structured commute/map evidence in the product frontend
 - 🔄 Comparison and shortlist workflows remain later product work
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
@@ -111,7 +120,11 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 - Geography is currently focused on configured Silicon Valley cities.
 - Some provider fields are unavailable for some listings and must remain unknown.
 - Soft preferences such as quiet / safe / modern do not yet have dedicated enrichment evidence.
-- Commute time is not yet computed and must not be guessed by Gemini.
+- Commute is computed only when destination, limit, travel mode, coordinates,
+  and a working Routes API key are available; otherwise it remains explicitly
+  unknown or unavailable and must not be guessed by Gemini.
+- Natural-language destination resolution has not yet been validated with a
+  live key; Places API was intentionally not added by the Maps boundary PR.
 - Persistent shortlist / comparison workflows are not complete.
 - Conversation ownership and ADK sessions are still process memory; Firestore persistence is not complete.
 - Background monitoring and landlord outreach are outside the current MVP.
