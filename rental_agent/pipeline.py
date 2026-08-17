@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from rental_agent.commute import CommuteResult
 from rental_agent.models import Listing, RankedListing, SearchRequirements
 
 
-def passes_hard_filters(listing: Listing, req: SearchRequirements) -> bool:
+def passes_hard_filters(
+    listing: Listing,
+    req: SearchRequirements,
+    commute: CommuteResult | None = None,
+) -> bool:
     if listing.city.casefold() != req.city.casefold() or listing.state.upper() != req.state.upper():
         return False
     if listing.status and listing.status.casefold() != "active":
@@ -31,6 +36,11 @@ def passes_hard_filters(listing: Listing, req: SearchRequirements) -> bool:
         return False
     if req.parking_required and listing.parking_available is not True:
         return False
+    if req.max_commute_minutes is not None:
+        if commute is None or commute.status != "available":
+            return False
+        if commute.duration_minutes is None or commute.duration_minutes > req.max_commute_minutes:
+            return False
     return True
 
 
@@ -49,7 +59,11 @@ def _score(listing: Listing, req: SearchRequirements) -> float:
     return score
 
 
-def _explain(listing: Listing, req: SearchRequirements) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _explain(
+    listing: Listing,
+    req: SearchRequirements,
+    commute: CommuteResult | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     reasons: list[str] = []
     tradeoffs: list[str] = []
     if req.max_rent is not None and listing.rent is not None:
@@ -64,23 +78,30 @@ def _explain(listing: Listing, req: SearchRequirements) -> tuple[tuple[str, ...]
         reasons.append("parking confirmed available")
     elif listing.parking_available is None:
         tradeoffs.append("parking not provided by source")
+    if req.max_commute_minutes is not None and commute is not None and commute.status == "available":
+        reasons.append(f"{commute.duration_minutes} min commute")
     return tuple(reasons), tuple(tradeoffs)
 
 
 def filter_and_rank(
-    listings: list[Listing], req: SearchRequirements, top_n: int = 5
+    listings: list[Listing],
+    req: SearchRequirements,
+    top_n: int = 5,
+    commutes: dict[str, CommuteResult] | None = None,
 ) -> list[RankedListing]:
     ranked = []
     for listing in listings:
-        if not passes_hard_filters(listing, req):
+        commute = commutes.get(listing.id) if commutes is not None else None
+        if not passes_hard_filters(listing, req, commute):
             continue
-        reasons, tradeoffs = _explain(listing, req)
+        reasons, tradeoffs = _explain(listing, req, commute)
         ranked.append(
             RankedListing(
                 listing=listing,
                 score=_score(listing, req),
                 reasons=reasons,
                 tradeoffs=tradeoffs,
+                commute=commute,
             )
         )
     ranked.sort(
