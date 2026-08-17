@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
 
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -36,6 +37,17 @@ class JsonFormatter(logging.Formatter):
         "conversation_id",
         "mode",
         "listing_count",
+        "tool",
+        "models",
+        "provider",
+        "provider_status",
+        "provider_latency_ms",
+        "provider_search_performed",
+        "sources",
+        "source_statuses",
+        "failed_sources",
+        "data_source",
+        "cache_status",
         "logging.googleapis.com/trace",
     )
 
@@ -108,11 +120,16 @@ def install_request_logging(
             response = await call_next(request)
             return response
         except Exception:
+            log_fields["status_code"] = 500
             log_fields["duration_ms"] = round(
                 (time.perf_counter() - started) * 1000, 2
             )
             logger.exception("request failed", extra=log_fields)
-            raise
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error."},
+            )
+            return response
         finally:
             if response is not None:
                 response.headers["X-Request-ID"] = request_id

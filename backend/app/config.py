@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -42,8 +43,10 @@ def _positive_seconds(value: str) -> float:
         seconds = float(value)
     except ValueError as exc:
         raise ValueError("AGENT_TIMEOUT_SECONDS must be a number.") from exc
-    if seconds <= 0:
-        raise ValueError("AGENT_TIMEOUT_SECONDS must be greater than zero.")
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(
+            "AGENT_TIMEOUT_SECONDS must be a finite number greater than zero."
+        )
     return seconds
 
 

@@ -4,6 +4,8 @@ import asyncio
 from functools import lru_cache
 import logging
 import math
+import re
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -26,6 +28,93 @@ logger = logging.getLogger("keys_by_friday.agent")
 
 class AgentServiceError(RuntimeError):
     """Stable backend boundary for failures from the ADK execution path."""
+
+
+_LOG_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
+_REALTYAPI_MULTI_SOURCES = ("apartments", "zillow", "realtor")
+
+
+def _safe_log_token(value: object) -> str | None:
+    """Keep dependency metadata useful without allowing arbitrary log content."""
+
+    token = str(value).strip() if value is not None else ""
+    return token if _LOG_TOKEN_PATTERN.fullmatch(token) else None
+
+
+def _provider_log_fields(
+    search_payload: dict[str, Any] | None,
+    *,
+    provider_latency_ms: float | None,
+) -> dict[str, object]:
+    """Build sanitized, non-secret fields for one listing-search tool result."""
+
+    if search_payload is None:
+        return {
+            "tool": "search_listings",
+            "provider": "not_called",
+            "provider_status": "not_called",
+            "provider_search_performed": False,
+            "sources": [],
+            "source_statuses": {},
+            "failed_sources": [],
+            "data_source": "not_applicable",
+            "cache_status": "not_applicable",
+        }
+
+    provider = _safe_log_token(search_payload.get("provider")) or "unknown"
+    data_source = _safe_log_token(search_payload.get("data_source")) or "unknown"
+    network_call = search_payload.get("provider_search_performed") is True
+
+    failed_value = search_payload.get("failed_sources", [])
+    failed_sources = (
+        [
+            token
+            for item in failed_value
+            if (token := _safe_log_token(item)) is not None
+        ]
+        if isinstance(failed_value, (list, tuple))
+        else []
+    )
+
+    if provider == "realtyapi-multi":
+        sources = list(_REALTYAPI_MULTI_SOURCES)
+    elif provider.startswith("realtyapi-"):
+        source = _safe_log_token(provider.removeprefix("realtyapi-"))
+        sources = [source] if source else []
+    elif provider == "mock":
+        sources = ["mock"]
+    else:
+        sources = []
+
+    if not network_call:
+        provider_status = "cache_hit"
+        source_statuses = {source: "cache" for source in sources}
+    else:
+        provider_status = (
+            "success"
+            if search_payload.get("search_complete") is not False
+            else "partial_failure"
+        )
+        failed = set(failed_sources)
+        source_statuses = {
+            source: "failed" if source in failed else "success"
+            for source in sources
+        }
+
+    fields: dict[str, object] = {
+        "tool": "search_listings",
+        "provider": provider,
+        "provider_status": provider_status,
+        "provider_search_performed": network_call,
+        "sources": sources,
+        "source_statuses": source_statuses,
+        "failed_sources": failed_sources,
+        "data_source": data_source,
+        "cache_status": "network" if network_call else "cache",
+    }
+    if provider_latency_ms is not None:
+        fields["provider_latency_ms"] = round(provider_latency_ms, 2)
+    return fields
 
 
 def _optional_float(value: object) -> float | None:
@@ -413,8 +502,10 @@ class AgentService:
             if timeout_seconds is None
             else timeout_seconds
         )
-        if self.timeout_seconds <= 0:
-            raise ValueError("Agent timeout must be greater than zero.")
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError(
+                "Agent timeout must be a finite number greater than zero."
+            )
         self._runner = None
 
     def _get_runner(self):
@@ -435,6 +526,7 @@ class AgentService:
                 mode="stub",
             )
 
+        started = time.perf_counter()
         logger.info(
             "agent request started",
             extra={"conversation_id": conversation_id, "mode": self.mode},
@@ -447,7 +539,13 @@ class AgentService:
         except TimeoutError as exc:
             logger.warning(
                 "agent request timed out",
-                extra={"conversation_id": conversation_id, "mode": self.mode},
+                extra={
+                    "conversation_id": conversation_id,
+                    "mode": self.mode,
+                    "duration_ms": round(
+                        (time.perf_counter() - started) * 1000, 2
+                    ),
+                },
             )
             raise AgentServiceError("ADK execution timed out") from exc
 
@@ -457,6 +555,9 @@ class AgentService:
                 "conversation_id": conversation_id,
                 "mode": self.mode,
                 "listing_count": len(response.listings),
+                "duration_ms": round(
+                    (time.perf_counter() - started) * 1000, 2
+                ),
             },
         )
         return response
@@ -483,16 +584,31 @@ class AgentService:
             search_payload: dict[str, Any] | None = None
             detail_payloads: list[dict[str, Any]] = []
             route_payload: dict[str, Any] | None = None
+            models: list[str] = []
+            search_started_at: float | None = None
+            provider_latency_ms: float | None = None
 
             async for event in runner.run_async(
                 user_id=user_id, session_id=conversation_id, new_message=content
             ):
+                model = _safe_log_token(getattr(event, "model_version", None))
+                if model and model not in models:
+                    models.append(model)
+
+                for function_call in event.get_function_calls():
+                    if function_call.name == "search_listings":
+                        search_started_at = time.perf_counter()
+
                 for function_response in event.get_function_responses():
                     payload = function_response.response
                     if not isinstance(payload, dict):
                         continue
                     if function_response.name == "search_listings":
                         search_payload = payload
+                        if search_started_at is not None:
+                            provider_latency_ms = (
+                                time.perf_counter() - search_started_at
+                            ) * 1000
                     elif function_response.name == "get_listing_details":
                         detail_payloads.append(payload)
                     elif function_response.name == "get_route_details":
@@ -511,6 +627,19 @@ class AgentService:
 
         if not final_text:
             raise AgentServiceError("ADK agent completed without a final response")
+
+        logger.info(
+            "agent dependency telemetry",
+            extra={
+                "conversation_id": conversation_id,
+                "mode": self.mode,
+                "models": models,
+                **_provider_log_fields(
+                    search_payload,
+                    provider_latency_ms=provider_latency_ms,
+                ),
+            },
+        )
 
         return SearchResponse(
             conversationId=conversation_id,
