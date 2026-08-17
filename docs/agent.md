@@ -6,10 +6,12 @@
 
 Keys by Friday uses one Google ADK Rental Agent.
 
-The Agent exposes two product tools:
+The Agent exposes four product tools:
 
 - `search_listings()`
 - `get_listing_details()`
+- `get_route_details()`
+- `compare_candidates()`
 
 ## Authority
 
@@ -28,6 +30,8 @@ The Agent exposes two product tools:
 - rank eligible listings
 - merge verification evidence
 - re-check hard constraints
+- evaluate supported soft preferences from listing evidence
+- build deterministic side-by-side comparison data
 
 Gemini must not override deterministic rejection or invent unavailable listing facts.
 
@@ -42,6 +46,7 @@ User request
 → deterministic ranking
 → strongest candidates
 → get_listing_details()
+→ compare_candidates()
 → final explanation
 ```
 

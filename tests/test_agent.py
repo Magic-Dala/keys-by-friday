@@ -6,12 +6,13 @@ from rental_agent.models import Listing
 from rental_agent.providers import get_provider
 
 
-def test_agent_has_listing_and_route_tools():
+def test_agent_has_listing_route_and_comparison_tools():
     assert root_agent.name == "single_rental_agent"
     assert [tool.__name__ for tool in root_agent.tools] == [
         "search_listings",
         "get_listing_details",
         "get_route_details",
+        "compare_candidates",
     ]
 
 
