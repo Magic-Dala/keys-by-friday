@@ -78,6 +78,7 @@ def test_readiness_is_ready_in_stub_mode(monkeypatch: pytest.MonkeyPatch) -> Non
         "status": "ready",
         "checks": {
             "api": "ok",
+            "auth": "disabled",
             "agent": "stub",
             "provider": "not_required",
         },
@@ -93,7 +94,14 @@ def test_readiness_reports_missing_adk_configuration(
     monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
     monkeypatch.delenv("REALTYAPI_API_KEY", raising=False)
     client = TestClient(
-        create_app(Settings(agent_mode="adk", app_environment="production"))
+        create_app(
+            Settings(
+                agent_mode="adk",
+                app_environment="production",
+                auth_mode="firebase",
+                firebase_project_id="test-project",
+            )
+        )
     )
 
     response = client.get("/ready")
@@ -112,7 +120,14 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
     monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
     monkeypatch.setenv("REALTYAPI_API_KEY", "test-realty-key")
     client = TestClient(
-        create_app(Settings(agent_mode="adk", app_environment="production"))
+        create_app(
+            Settings(
+                agent_mode="adk",
+                app_environment="production",
+                auth_mode="firebase",
+                firebase_project_id="test-project",
+            )
+        )
     )
 
     response = client.get("/ready")
@@ -129,7 +144,12 @@ def test_production_readiness_rejects_stub_and_mock(
     monkeypatch.setenv("LISTING_PROVIDER", "mock")
     client = TestClient(
         create_app(
-            Settings(agent_mode="stub", app_environment="production")
+            Settings(
+                agent_mode="stub",
+                app_environment="production",
+                auth_mode="firebase",
+                firebase_project_id="test-project",
+            )
         )
     )
 
@@ -147,7 +167,14 @@ def test_production_readiness_rejects_mock_with_configured_adk(
     monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
     monkeypatch.setenv("LISTING_PROVIDER", "mock")
     client = TestClient(
-        create_app(Settings(agent_mode="adk", app_environment="production"))
+        create_app(
+            Settings(
+                agent_mode="adk",
+                app_environment="production",
+                auth_mode="firebase",
+                firebase_project_id="test-project",
+            )
+        )
     )
 
     response = client.get("/ready")
@@ -162,13 +189,13 @@ def test_agent_timeout_becomes_stable_service_error(
 ) -> None:
     service = AgentService(mode="adk", timeout_seconds=0.001)
 
-    async def slow_agent(message: str, conversation_id: str):
+    async def slow_agent(message: str, conversation_id: str, user_id: str):
         await asyncio.sleep(0.05)
 
     monkeypatch.setattr(service, "_send_adk_message", slow_agent)
 
     with pytest.raises(AgentServiceError, match="timed out"):
-        asyncio.run(service.send_message("Find a rental"))
+        asyncio.run(service.send_message("Find a rental", user_id="test-user"))
 
 
 def test_agent_service_rejects_non_positive_timeout() -> None:

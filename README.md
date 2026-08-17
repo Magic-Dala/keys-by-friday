@@ -181,6 +181,7 @@ GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 | `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
 | `docs/development.md` | Manual service commands and contributor workflow |
 | `docs/deployment.md` | macOS, Docker, and Cloud Run backend deployment |
+| `docs/authentication.md` | Firebase identity setup and Milestone 2 tests |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |

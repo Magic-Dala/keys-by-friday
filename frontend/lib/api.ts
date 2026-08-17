@@ -1,3 +1,4 @@
+import { getFirebaseIdToken } from "@/lib/firebase-auth";
 import type {
   Commute,
   CommuteEvaluation,
@@ -194,18 +195,35 @@ async function errorMessage(response: Response): Promise<string> {
   return `Backend request failed with HTTP ${response.status}.`;
 }
 
+async function authenticatedHeaders(): Promise<Record<string, string>> {
+  let idToken: string | undefined;
+  try {
+    idToken = await getFirebaseIdToken();
+  } catch {
+    throw new ApiError(
+      "Couldn’t sign you in. Check the Firebase settings, then refresh the page.",
+    );
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+  };
+  if (idToken) headers.Authorization = `Bearer ${idToken}`;
+  return headers;
+}
+
 export async function sendChat(
   request: SearchRequest,
   options: { signal?: AbortSignal } = {},
 ): Promise<SearchResponse> {
+  const headers = await authenticatedHeaders();
+
   let response: Response;
   try {
     response = await fetch(`${backendUrl}/api/chat`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(request),
       cache: "no-store",
       signal: options.signal,
@@ -234,14 +252,12 @@ export async function getSelectedRoute(
   request: SelectedRouteRequest,
   options: { signal?: AbortSignal } = {},
 ): Promise<RouteDetail> {
+  const headers = await authenticatedHeaders();
   let response: Response;
   try {
     response = await fetch(`${backendUrl}/api/route`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(request),
       cache: "no-store",
       signal: options.signal,

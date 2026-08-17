@@ -19,6 +19,7 @@ GET /health
 ```http
 POST /api/chat
 Content-Type: application/json
+Authorization: Bearer <Firebase-ID-token>
 ```
 
 Request:
@@ -45,6 +46,22 @@ Response:
 
 Validation failures return HTTP `422`. If the Agent execution path is temporarily unavailable, the backend returns HTTP `502` without exposing provider or runtime internals.
 
+When `AUTH_MODE=firebase`, a missing or invalid Firebase ID token returns HTTP
+`401`. A verified user attempting to reuse another user's `conversationId`
+returns HTTP `403`. The request body never accepts a user ID; identity comes only
+from the verified token.
+
+## Selected Route
+
+```http
+POST /api/route
+Content-Type: application/json
+Authorization: Bearer <Firebase-ID-token>
+```
+
+The selected-route request uses an existing `conversationId`. It is protected by
+the same verified Firebase identity and cross-user conversation check as chat.
+
 ## Listing
 
 ```ts
@@ -66,6 +83,7 @@ The backend may normalize internal Agent fields into this web shape.
 ## Rules
 
 - `/api/chat` is the primary user interaction endpoint.
+- `/api/route` may read only the verified user's conversation state.
 - Frontend does not depend on ADK internals.
 - `adk` is the normal real-Agent mode.
 - `stub` is explicit development/testing mode only.

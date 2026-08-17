@@ -23,6 +23,7 @@ From the repository root, test without external API keys:
 ```bash
 APP_ENV=local \
 AGENT_MODE=stub \
+AUTH_MODE=disabled \
 LISTING_PROVIDER=mock \
 uv run --extra backend uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -69,6 +70,7 @@ docker run --rm \
   -p 8080:8080 \
   -e APP_ENV=local \
   -e AGENT_MODE=stub \
+  -e AUTH_MODE=disabled \
   -e LISTING_PROVIDER=mock \
   keys-by-friday-backend:local
 ```
@@ -114,7 +116,6 @@ export KBF_REGION='us-west1'
 export KBF_SERVICE='keys-by-friday-backend-1'
 export KBF_FRONTEND_ORIGIN='http://localhost:3000'
 export KBF_SERVICE_ACCOUNT="kbf-backend@${KBF_PROJECT_ID}.iam.gserviceaccount.com"
-export KBF_INVOKER_EMAIL="$(gcloud config get-value account)"
 ```
 
 These values are configuration, not secrets.
@@ -170,11 +171,10 @@ gcloud secrets add-iam-policy-binding kbf-realtyapi-key \
 
 ## Deploy to Cloud Run
 
-Milestone 1 keeps the Cloud Run service private. Cloud Run IAM rejects anonymous
-requests before they can reach `/api/chat`, preventing anonymous users from
-consuming paid Gemini or RealtyAPI quota. Do not change this to
-`--allow-unauthenticated` until application-level authentication and abuse
-controls are merged and tested.
+Milestone 2 allows browsers to reach Cloud Run, then protects conversation APIs
+with verified Firebase ID tokens. `--allow-unauthenticated` means Cloud Run IAM
+does not require a Google employee/developer account; it does not bypass the
+FastAPI authentication required by `/api/chat` and `/api/route`.
 
 From the repository root:
 
@@ -184,7 +184,7 @@ gcloud run deploy "$KBF_SERVICE" \
   --project "$KBF_PROJECT_ID" \
   --region "$KBF_REGION" \
   --service-account "$KBF_SERVICE_ACCOUNT" \
-  --no-allow-unauthenticated \
+  --allow-unauthenticated \
   --port 8080 \
   --cpu 1 \
   --memory 1Gi \
@@ -192,36 +192,14 @@ gcloud run deploy "$KBF_SERVICE" \
   --min-instances 0 \
   --max-instances 1 \
   --timeout 180 \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=FALSE,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=FALSE,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
   --set-secrets 'GOOGLE_API_KEY=kbf-google-api-key:1,REALTYAPI_API_KEY=kbf-realtyapi-key:1'
 ```
 
-Grant only your current Google account permission to invoke this private demo
-service:
-
-```bash
-gcloud run services add-iam-policy-binding "$KBF_SERVICE" \
-  --project "$KBF_PROJECT_ID" \
-  --region "$KBF_REGION" \
-  --member="user:${KBF_INVOKER_EMAIL}" \
-  --role='roles/run.invoker'
-```
-
-If an earlier revision was deployed publicly, explicitly remove its public
-invoker binding:
-
-```bash
-gcloud run services remove-iam-policy-binding "$KBF_SERVICE" \
-  --project "$KBF_PROJECT_ID" \
-  --region "$KBF_REGION" \
-  --member='allUsers' \
-  --role='roles/run.invoker' \
-  --all
-```
-
-This IAM boundary authenticates developers and service accounts, not Firebase
-browser users. Until the Firebase authentication milestone is merged, use the
-authenticated command-line smoke test below and keep the hosted API private.
+Before making this change on an existing service, confirm that Firebase is
+enabled, `AUTH_MODE=firebase`, and the frontend sends Firebase ID tokens. Monitor
+Gemini and RealtyAPI quotas because anonymous Firebase identities are not a
+substitute for future rate limiting and abuse controls.
 
 `max-instances=1` reduces the chance that an in-memory conversation is split
 across instances. It does not make sessions durable: a restart or scale-to-zero
@@ -244,51 +222,25 @@ export KBF_BACKEND_URL="$(gcloud run services describe "$KBF_SERVICE" \
 echo "$KBF_BACKEND_URL"
 ```
 
-Create a short-lived identity token for the Google account that has the Cloud
-Run Invoker role:
-
-```bash
-export KBF_ID_TOKEN="$(gcloud auth print-identity-token \
-  --audiences="$KBF_BACKEND_URL")"
-```
-
 Test health and readiness:
 
 ```bash
-curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
-  "$KBF_BACKEND_URL/health"
-curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
-  "$KBF_BACKEND_URL/ready"
+curl -i "$KBF_BACKEND_URL/health"
+curl -i "$KBF_BACKEND_URL/ready"
 ```
 
-Test a real rental search:
+Confirm that a request without a Firebase token is rejected:
 
 ```bash
 curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -H 'X-Request-ID: cloud-smoke-test' \
   -d '{"message":"2B2B under $4,000 in Mountain View"}' \
   "$KBF_BACKEND_URL/api/chat"
 ```
 
-Copy the returned `conversationId` into a follow-up request:
-
-```bash
-curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"I also need parking","conversationId":"PASTE_ID_HERE"}' \
-  "$KBF_BACKEND_URL/api/chat"
-```
-
-Clear the short-lived token when testing is complete:
-
-```bash
-unset KBF_ID_TOKEN
-```
+The desired response is HTTP `401`. Test a real rental search through the
+Firebase-configured frontend so it supplies a valid token. Follow
+`docs/authentication.md` for the browser check and conversation-isolation tests.
 
 View recent application and platform logs:
 
