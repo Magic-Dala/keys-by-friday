@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import os
+
+from backend.app.config import Settings
+
+
+def _is_true(value: str | None) -> bool:
+    return (value or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
+    """Check configuration without calling Gemini or consuming provider quota."""
+
+    checks = {"api": "ok"}
+    is_production = settings.app_environment == "production"
+
+    if settings.agent_mode == "stub" and not is_production:
+        checks["agent"] = "stub"
+        checks["provider"] = "not_required"
+        return True, checks
+
+    if settings.agent_mode == "stub":
+        agent_ready = False
+        checks["agent"] = "stub_not_allowed"
+    else:
+        using_vertex_ai = _is_true(os.getenv("GOOGLE_GENAI_USE_VERTEXAI"))
+        if using_vertex_ai:
+            agent_ready = bool(
+                os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+                and os.getenv("GOOGLE_CLOUD_LOCATION", "").strip()
+            )
+        else:
+            agent_ready = bool(
+                os.getenv("GOOGLE_API_KEY", "").strip()
+                or os.getenv("GEMINI_API_KEY", "").strip()
+            )
+        checks["agent"] = "configured" if agent_ready else "not_configured"
+
+    provider = os.getenv("LISTING_PROVIDER", "mock").strip().casefold()
+    if provider == "mock":
+        provider_ready = not is_production
+        checks["provider"] = "mock" if provider_ready else "mock_not_allowed"
+    elif provider == "realtyapi":
+        provider_ready = bool(os.getenv("REALTYAPI_API_KEY", "").strip())
+        checks["provider"] = (
+            "configured" if provider_ready else "not_configured"
+        )
+    else:
+        provider_ready = False
+        checks["provider"] = "unsupported"
+
+    return agent_ready and provider_ready, checks
