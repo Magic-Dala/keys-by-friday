@@ -204,6 +204,15 @@ def _listing_from_dict(value: dict[str, Any]) -> Listing:
     return Listing(**payload)
 
 
+def _try_listing_from_dict(value: object) -> Listing | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return _listing_from_dict(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _commute_from_dict(value: object) -> CommuteResult | None:
     if not isinstance(value, dict) or not value.get("destination"):
         return None
@@ -234,7 +243,7 @@ def _merge_listing_detail(search_listing: Listing | None, detail: Listing) -> Li
         return detail
     merged = search_listing.to_dict()
     for key, value in detail.to_dict().items():
-        if key in {"query_backed_fields", "rent_is_exact", "bedrooms_is_exact"}:
+        if key in {"id", "query_backed_fields", "rent_is_exact", "bedrooms_is_exact"}:
             continue
         if value is not None and value != "" and value != [] and value != ():
             merged[key] = value
@@ -1013,7 +1022,7 @@ def get_listing_details(
         if not isinstance(listing_payload, dict):
             continue
         if str(listing_payload.get("id")) == listing_id:
-            prior_listing = _listing_from_dict(listing_payload)
+            prior_listing = _try_listing_from_dict(listing_payload)
             prior_commute = _commute_from_dict(candidate.get("commute"))
             rank_value = candidate.get("current_search_rank")
             current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else index + 1
@@ -1075,7 +1084,14 @@ def _matched_text_evidence(
     for field_name, value in _soft_preference_text_fields(listing):
         folded = value.casefold()
         for phrase in phrases:
-            if phrase in folded:
+            pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)")
+            match = pattern.search(folded)
+            if match is not None:
+                prefix = folded[max(0, match.start() - 8) : match.start()]
+                if not phrase.startswith(("not ", "no ")) and re.search(
+                    r"\b(?:not|no)\s+$", prefix
+                ):
+                    continue
                 evidence.append({"field": field_name, "match": phrase})
     return evidence
 
@@ -1106,10 +1122,25 @@ def _soft_preference_evidence(
         "newer": ("new construction", "newly built", "newer construction"),
     }
     contradicted_phrases = {
-        "modern": ("dated interior", "needs renovation", "original kitchen", "original bathroom"),
-        "quiet": ("noisy", "noise-prone"),
-        "near transit": ("no public transit", "not near transit"),
-        "newer": (),
+        "modern": (
+            "not modern",
+            "dated interior",
+            "needs renovation",
+            "original kitchen",
+            "original bathroom",
+        ),
+        "quiet": ("not quiet", "noisy", "noise-prone"),
+        "near transit": (
+            "no public transit",
+            "not near transit",
+            "no caltrain",
+            "not near caltrain",
+            "no bart",
+            "not near bart",
+            "no light rail",
+            "no vta",
+        ),
+        "newer": ("not new construction", "not newly built"),
     }
     result: list[dict[str, object]] = []
     for preference in preferences:
@@ -1149,13 +1180,17 @@ def _comparison_candidate(
     req: SearchRequirements | None,
     commute: CommuteResult | None,
     verification_attempted: bool,
+    verification_error: str | None = None,
 ) -> dict[str, object]:
     canonical = listing.to_backend_dict()
     completeness = canonical["completeness"]
     evidence = canonical["evidence"]
     critical_unknown = list(completeness["criticalUnknownFields"])
     critical_query_backed = list(evidence["criticalQueryBackedFields"])
-    decision_unknowns = list(dict.fromkeys([*critical_unknown, *critical_query_backed]))
+    comparison_unknowns = list(
+        dict.fromkeys([*critical_unknown, *critical_query_backed])
+    )
+    decision_unknowns = list(comparison_unknowns)
     passes = passes_hard_filters(listing, req, commute) if req is not None else None
 
     rank_value = candidate.get("current_search_rank")
@@ -1172,14 +1207,42 @@ def _comparison_candidate(
             required_query_backed.append("policies.petsAllowed")
         if req.parking_required and parking_query_backed:
             required_query_backed.append("policies.parkingAvailable")
-        if req.min_bathrooms is not None and "property.bathroomsMinEvidence" in query_backed:
-            required_query_backed.append("property.bathroomsMinEvidence")
+        if req.min_bathrooms is not None:
+            if listing.bathrooms is not None:
+                if "property.bathrooms" in query_backed:
+                    required_query_backed.append("property.bathrooms")
+            elif "property.bathroomsMinEvidence" in query_backed:
+                required_query_backed.append("property.bathroomsMinEvidence")
+        if req.max_bathrooms is not None and "property.bathrooms" in query_backed:
+            required_query_backed.append("property.bathrooms")
+    required_query_backed = list(dict.fromkeys(required_query_backed))
+    authoritative_passes = passes
+    if req is not None and required_query_backed:
+        neutral = listing.to_dict()
+        if "policies.petsAllowed" in required_query_backed:
+            neutral["pets_allowed"] = True
+        if "policies.parkingAvailable" in required_query_backed:
+            neutral["parking_available"] = True
+        if "property.bathrooms" in required_query_backed:
+            neutral_bathrooms = (
+                req.min_bathrooms
+                if req.min_bathrooms is not None
+                else req.max_bathrooms
+            )
+            neutral["bathrooms"] = neutral_bathrooms
+            neutral["bathrooms_min_evidence"] = None
+        elif "property.bathroomsMinEvidence" in required_query_backed:
+            neutral["bathrooms"] = None
+            neutral["bathrooms_min_evidence"] = req.min_bathrooms
+        authoritative_passes = passes_hard_filters(
+            _listing_from_dict(neutral), req, commute
+        )
     comparison_ready = bool(completeness["comparisonReady"])
     decision_ready = bool(completeness["decisionReady"]) and passes is not False
-    if passes is None:
+    if authoritative_passes is None:
         hard_constraint_status = "not_evaluated"
         satisfies_current_requirements = None
-    elif not passes:
+    elif not authoritative_passes:
         hard_constraint_status = "fail"
         satisfies_current_requirements = False
     elif required_query_backed:
@@ -1232,7 +1295,7 @@ def _comparison_candidate(
         "satisfies_current_requirements": satisfies_current_requirements,
         "hard_constraint_evidence_only": required_query_backed,
         "detail_verified": listing.detail_verified,
-        "comparison_unknowns": critical_unknown,
+        "comparison_unknowns": comparison_unknowns,
         "decision_unknowns": decision_unknowns,
         "soft_preference_evidence": _soft_preference_evidence(
             listing, req.soft_preferences if req is not None else ()
@@ -1240,6 +1303,7 @@ def _comparison_candidate(
         "comparison_ready": comparison_ready,
         "decision_ready": decision_ready,
         "verification_attempted": verification_attempted,
+        "verification_error": verification_error,
         "canonical_listing": canonical,
     }
 
@@ -1305,24 +1369,38 @@ def compare_candidates(
 
     comparisons: list[dict[str, object]] = []
     resolved_requested: list[str] = []
+    invalid: list[str] = []
     for identifier, candidate in selected:
         resolved_requested.append(identifier)
         verification_attempted = False
+        verification_error = None
         cached = verified.get(identifier)
         listing_payload: object = None
         if isinstance(cached, dict):
             listing_payload = cached.get("listing")
-        if not isinstance(listing_payload, dict):
-            listing_payload = candidate.get("listing")
+        listing = _try_listing_from_dict(listing_payload)
+        if listing_payload is not None and listing is None:
+            verification_error = "invalid_cached_detail"
+        if listing is None:
+            candidate_payload = candidate.get("listing")
+            listing = _try_listing_from_dict(candidate_payload)
             if verify_missing and tool_context is not None:
-                cached = get_listing_details(identifier, tool_context=tool_context)
                 verification_attempted = True
-                listing_payload = cached.get("listing")
+                try:
+                    cached = get_listing_details(identifier, tool_context=tool_context)
+                except Exception:
+                    verification_error = "detail_lookup_failed"
+                else:
+                    verified_listing = _try_listing_from_dict(cached.get("listing"))
+                    if verified_listing is None:
+                        verification_error = "invalid_detail_payload"
+                    else:
+                        listing = verified_listing
+                        verification_error = None
 
-        if not isinstance(listing_payload, dict):
-            missing.append(identifier)
+        if listing is None:
+            invalid.append(identifier)
             continue
-        listing = _listing_from_dict(listing_payload)
         commute = _commute_from_dict(candidate.get("commute"))
         comparisons.append(
             _comparison_candidate(
@@ -1331,6 +1409,7 @@ def compare_candidates(
                 req=req,
                 commute=commute,
                 verification_attempted=verification_attempted,
+                verification_error=verification_error,
             )
         )
 
@@ -1355,6 +1434,7 @@ def compare_candidates(
         "selection_limit": _COMPARISON_LIMIT,
         "too_many_requested": too_many,
         "missing_listing_ids": list(dict.fromkeys(missing)),
+        "invalid_listing_ids": list(dict.fromkeys(invalid)),
         "candidate_count": len(comparisons),
         "candidates": comparisons,
         "comparison_policy": {

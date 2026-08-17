@@ -175,6 +175,52 @@ def test_soft_preference_evidence_is_conservative(monkeypatch):
     }
 
 
+def test_soft_preference_negated_text_is_not_supported(monkeypatch):
+    rows = [
+        _listing(
+            "one",
+            description=(
+                "This home is not quiet, the interior is not modern, and there is "
+                "no Caltrain nearby."
+            ),
+        )
+    ]
+    provider = DecisionProvider(rows)
+    context = _searched_context(
+        monkeypatch, provider, soft_preferences="quiet, modern, near transit"
+    )
+
+    result = compare_candidates("one", verify_missing=False, tool_context=context)
+    evidence = {
+        item["preference"]: item
+        for item in result["candidates"][0]["soft_preference_evidence"]
+    }
+
+    assert evidence["quiet"]["status"] == "contradicted"
+    assert evidence["modern"]["status"] == "contradicted"
+    assert evidence["near transit"]["status"] == "contradicted"
+
+
+def test_soft_preference_matching_requires_phrase_boundaries(monkeypatch):
+    row = _listing(
+        "one",
+        description="Modernization is planned and an on-site bartender is available.",
+    )
+    provider = DecisionProvider([row])
+    context = _searched_context(
+        monkeypatch, provider, soft_preferences="modern, near transit"
+    )
+
+    result = compare_candidates("one", verify_missing=False, tool_context=context)
+    evidence = {
+        item["preference"]: item
+        for item in result["candidates"][0]["soft_preference_evidence"]
+    }
+
+    assert evidence["modern"]["status"] == "unknown"
+    assert evidence["near transit"]["status"] == "unknown"
+
+
 def test_query_backed_pet_parking_and_minimum_bath_evidence_are_not_exact_facts(monkeypatch):
     row = replace(
         _listing("one", pets_allowed=True, parking_available=True),
@@ -199,12 +245,193 @@ def test_query_backed_pet_parking_and_minimum_bath_evidence_are_not_exact_facts(
     assert candidate["parking_policy"]["available"] is None
     assert candidate["parking_policy"]["query_backed_evidence"] is True
     assert candidate["parking_policy"]["confirmed"] is False
+    assert "policies.petsAllowed" in candidate["comparison_unknowns"]
+    assert "policies.parkingAvailable" in candidate["comparison_unknowns"]
+    assert "property.bathroomsMinEvidence" in candidate["comparison_unknowns"]
     assert "policies.petsAllowed" in candidate["decision_unknowns"]
     assert "policies.parkingAvailable" in candidate["decision_unknowns"]
     assert "property.bathroomsMinEvidence" in candidate["decision_unknowns"]
     assert candidate["hard_constraint_status"] == "evidence_only"
     assert candidate["satisfies_current_requirements"] is None
     assert candidate["decision_ready"] is False
+
+
+def test_query_backed_exact_bathroom_is_evidence_only_for_hard_constraint(monkeypatch):
+    row = replace(_listing("one"), query_backed_fields=("bathrooms",))
+    provider = DecisionProvider([row])
+    context = _searched_context(monkeypatch, provider)
+
+    result = compare_candidates("one", verify_missing=False, tool_context=context)
+    candidate = result["candidates"][0]
+
+    assert candidate["hard_constraint_status"] == "evidence_only"
+    assert candidate["satisfies_current_requirements"] is None
+    assert "property.bathrooms" in candidate["hard_constraint_evidence_only"]
+    assert candidate["decision_ready"] is False
+
+
+def test_query_backed_negative_pet_and_parking_values_are_not_authoritative_failures():
+    row = _listing("one", pets_allowed=False, parking_available=False)
+    row = replace(
+        row,
+        query_backed_fields=("pets_allowed", "parking_available"),
+    )
+    context = SimpleNamespace(
+        state={
+            agent_module._REQUIREMENTS_STATE_KEY: agent_module._requirements_to_dict(
+                agent_module.SearchRequirements(
+                    city="Mountain View",
+                    pets_required=True,
+                    parking_required=True,
+                )
+            ),
+            agent_module._CANDIDATES_STATE_KEY: [
+                {"listing": row.to_dict(), "current_search_rank": 1}
+            ],
+            agent_module._VERIFIED_STATE_KEY: {},
+        }
+    )
+
+    result = compare_candidates("#1", verify_missing=False, tool_context=context)
+    candidate = result["candidates"][0]
+
+    assert candidate["hard_constraint_status"] == "evidence_only"
+    assert candidate["satisfies_current_requirements"] is None
+    assert set(candidate["hard_constraint_evidence_only"]) == {
+        "policies.petsAllowed",
+        "policies.parkingAvailable",
+    }
+
+
+def test_authoritative_hard_failure_still_wins_over_query_backed_evidence():
+    row = _listing("one", rent=4500, pets_allowed=False)
+    row = replace(row, query_backed_fields=("pets_allowed",))
+    context = SimpleNamespace(
+        state={
+            agent_module._REQUIREMENTS_STATE_KEY: agent_module._requirements_to_dict(
+                agent_module.SearchRequirements(
+                    city="Mountain View",
+                    max_rent=4000,
+                    pets_required=True,
+                )
+            ),
+            agent_module._CANDIDATES_STATE_KEY: [
+                {"listing": row.to_dict(), "current_search_rank": 1}
+            ],
+            agent_module._VERIFIED_STATE_KEY: {},
+        }
+    )
+
+    result = compare_candidates("#1", verify_missing=False, tool_context=context)
+    candidate = result["candidates"][0]
+
+    assert candidate["hard_constraint_status"] == "fail"
+    assert candidate["satisfies_current_requirements"] is False
+
+
+def test_authoritative_exact_bathroom_failure_wins_over_query_backed_minimum():
+    row = replace(
+        _listing("one"),
+        bathrooms=1,
+        bathrooms_min_evidence=2,
+        query_backed_fields=("bathrooms_min_evidence",),
+    )
+    context = SimpleNamespace(
+        state={
+            agent_module._REQUIREMENTS_STATE_KEY: agent_module._requirements_to_dict(
+                agent_module.SearchRequirements(
+                    city="Mountain View",
+                    min_bathrooms=2,
+                )
+            ),
+            agent_module._CANDIDATES_STATE_KEY: [
+                {"listing": row.to_dict(), "current_search_rank": 1}
+            ],
+            agent_module._VERIFIED_STATE_KEY: {},
+        }
+    )
+
+    result = compare_candidates("#1", verify_missing=False, tool_context=context)
+    candidate = result["candidates"][0]
+
+    assert candidate["bathrooms"] == {"exact": 1, "minimum_evidence": 2}
+    assert candidate["hard_constraint_status"] == "fail"
+    assert candidate["satisfies_current_requirements"] is False
+
+
+def test_detail_lookup_failure_preserves_comparison_without_crash(monkeypatch):
+    class FailingDetailProvider(DecisionProvider):
+        def get_listing(self, listing_id):
+            self.detail_calls.append(listing_id)
+            raise RuntimeError("detail upstream unavailable")
+
+    provider = FailingDetailProvider([_listing("one")])
+    context = _searched_context(monkeypatch, provider)
+
+    result = compare_candidates("one", verify_missing=True, tool_context=context)
+    candidate = result["candidates"][0]
+
+    assert provider.search_calls == 1
+    assert provider.detail_calls == ["one"]
+    assert candidate["listing_id"] == "one"
+    assert candidate["verification_attempted"] is True
+    assert candidate["verification_error"] == "detail_lookup_failed"
+    assert candidate["detail_verified"] is False
+    assert candidate["decision_ready"] is False
+
+
+def test_compare_reports_malformed_session_candidate_as_invalid():
+    context = SimpleNamespace(
+        state={
+            agent_module._REQUIREMENTS_STATE_KEY: {
+                "city": "Mountain View",
+                "state": "CA",
+                "soft_preferences": [],
+                "limit": 50,
+            },
+            agent_module._CANDIDATES_STATE_KEY: [
+                {"listing": {"id": "broken"}, "current_search_rank": 1}
+            ],
+            agent_module._VERIFIED_STATE_KEY: {},
+        }
+    )
+
+    result = compare_candidates("#1", verify_missing=False, tool_context=context)
+
+    assert result["candidate_count"] == 0
+    assert result["missing_listing_ids"] == []
+    assert result["invalid_listing_ids"] == ["broken"]
+
+
+def test_detail_verification_preserves_selected_listing_identity(monkeypatch):
+    row = _listing("selected-id")
+    provider = DecisionProvider(
+        [row],
+        {"selected-id": replace(row, id="wrong-detail-id", detail_verified=True)},
+    )
+    context = _searched_context(monkeypatch, provider)
+
+    result = compare_candidates("#1", verify_missing=True, tool_context=context)
+
+    assert result["candidates"][0]["listing_id"] == "selected-id"
+    assert set(context.state[agent_module._VERIFIED_STATE_KEY]) == {"selected-id"}
+
+
+def test_malformed_verified_cache_falls_back_to_valid_search_candidate(monkeypatch):
+    row = _listing("one")
+    provider = DecisionProvider([row])
+    context = _searched_context(monkeypatch, provider)
+    context.state[agent_module._VERIFIED_STATE_KEY] = {
+        "one": {"listing": {"id": "one"}}
+    }
+
+    result = compare_candidates("one", verify_missing=False, tool_context=context)
+    candidate = result["candidates"][0]
+
+    assert candidate["listing_id"] == "one"
+    assert candidate["verification_error"] == "invalid_cached_detail"
+    assert candidate["detail_verified"] is False
+    assert provider.detail_calls == []
 
 
 def test_same_state_and_input_yields_same_structured_comparison(monkeypatch):
