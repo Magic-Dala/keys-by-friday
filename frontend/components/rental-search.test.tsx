@@ -3,10 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { RentalSearch } from "@/components/rental-search";
-import { sendChat } from "@/lib/api";
+import { getSelectedRoute, sendChat } from "@/lib/api";
 import type { SearchResponse } from "@/types/search";
 
-vi.mock("@/lib/api", () => ({ sendChat: vi.fn() }));
+vi.mock("@/lib/api", () => ({ getSelectedRoute: vi.fn(), sendChat: vi.fn() }));
 
 const searchResponse: SearchResponse = {
   conversationId: "conversation-1",
@@ -30,6 +30,7 @@ const searchResponse: SearchResponse = {
 
 beforeEach(() => {
   window.localStorage.clear();
+  vi.mocked(getSelectedRoute).mockReset();
   vi.mocked(sendChat).mockReset();
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "");
 });
@@ -40,11 +41,12 @@ it("aborts and clears an active route as soon as a refinement starts", async () 
   let routeSignal: AbortSignal | undefined;
   vi.mocked(sendChat)
     .mockResolvedValueOnce(searchResponse)
+    .mockImplementationOnce(() => new Promise(() => {}));
+  vi.mocked(getSelectedRoute)
     .mockImplementationOnce((_request, options) => {
       routeSignal = options?.signal;
       return new Promise(() => {});
-    })
-    .mockImplementationOnce(() => new Promise(() => {}));
+    });
 
   render(<RentalSearch />);
   const user = userEvent.setup();

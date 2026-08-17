@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
-import { sendChat } from "@/lib/api";
+import { getSelectedRoute } from "@/lib/api";
 import {
   initialRouteSelectionState,
-  routeRequestMessage,
   routeSelectionReducer,
   type RouteSelectionState,
 } from "@/lib/map-model";
@@ -31,11 +30,16 @@ export function useRouteSelection(conversationId?: string): {
     dispatch({ type: "select", listingId: listing.id, requestId });
 
     try {
-      const response = await sendChat(
-        { message: routeRequestMessage(listing), conversationId },
+      const route = await getSelectedRoute(
+        {
+          listingId: listing.id,
+          conversationId: conversationId ?? "",
+          destination: listing.commute?.destination,
+          mode: listing.commute?.mode,
+        },
         { signal: controller.signal },
       );
-      dispatch({ type: "resolved", listingId: listing.id, requestId, route: response.route });
+      dispatch({ type: "resolved", listingId: listing.id, requestId, route });
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       dispatch({
