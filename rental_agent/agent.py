@@ -45,6 +45,31 @@ _CACHE_COMPLETE_STATE_KEY = "rental_search_cache_complete"
 _CACHE_FAILED_SOURCES_STATE_KEY = "rental_search_cache_failed_sources"
 _VERIFIED_STATE_KEY = "rental_verified_details"
 _COMPARISON_LIMIT = 4
+_ACTIVITY_SCHEMA = "rental.agent_activity.v1"
+
+
+def _agent_activity(
+    *,
+    operation: str,
+    stage: str,
+    status: str,
+    completed_stages: list[str],
+    facts: dict[str, object],
+) -> dict[str, object]:
+    """Return deterministic execution metadata for backend/frontend integrations.
+
+    This intentionally contains no UI copy, percentages, timestamps, or model
+    reasoning. ADK tool-call events can represent operation start; this payload
+    describes only execution facts known when the tool returns.
+    """
+    return {
+        "schema": _ACTIVITY_SCHEMA,
+        "operation": operation,
+        "stage": stage,
+        "status": status,
+        "completed_stages": list(completed_stages),
+        "facts": dict(facts),
+    }
 
 
 def _positive_number(value: float | None) -> float | None:
@@ -704,6 +729,16 @@ def search_listings(
         if tool_context is not None:
             tool_context.state[_REQUIREMENTS_STATE_KEY] = _requirements_to_dict(req)
         return {
+            "activity": _agent_activity(
+                operation="search_listings",
+                stage="requirements",
+                status="requires_input",
+                completed_stages=["requirements"],
+                facts={
+                    "provider_search_performed": False,
+                    "missing_requirements": list(missing_commute_requirements),
+                },
+            ),
             "status": "requires_input",
             "missing_requirements": missing_commute_requirements,
             "provider": "not_called",
@@ -898,7 +933,25 @@ def search_listings(
         tool_context.state[_CANDIDATES_STATE_KEY] = candidate_payload
         tool_context.state[_VERIFIED_STATE_KEY] = {}
 
+    completed_stages = ["requirements", "listing_search", "hard_filter"]
+    if req.max_commute_minutes is not None:
+        completed_stages.append("commute_check")
+
     return {
+        "activity": _agent_activity(
+            operation="search_listings",
+            stage="listing_search",
+            status="completed" if search_complete else "partial",
+            completed_stages=completed_stages,
+            facts={
+                "provider_search_performed": provider_search_performed,
+                "data_source": data_source,
+                "search_complete": search_complete,
+                "failed_source_count": len(failed_sources),
+                "matched_count": len(property_groups),
+                "posting_count": sum(len(group["postings"]) for group in property_groups),
+            },
+        ),
         "provider": provider_name,
         "data_source": data_source,
         "provider_search_performed": provider_search_performed,
@@ -993,7 +1046,18 @@ def get_route_details(
 ) -> dict[str, object]:
     """Compute on-demand route geometry for one already-selected search candidate."""
     state = tool_context.state if tool_context is not None else {}
-    return _route_details_from_state(listing_id, destination, travel_mode, state)
+    result = _route_details_from_state(listing_id, destination, travel_mode, state)
+    result["activity"] = _agent_activity(
+        operation="get_route_details",
+        stage="commute_check",
+        status="completed",
+        completed_stages=["commute_check"],
+        facts={
+            "listing_id": listing_id,
+            "route_status": result.get("status"),
+        },
+    )
+    return result
 
 
 def get_listing_details(
@@ -1046,6 +1110,22 @@ def get_listing_details(
         "remaining_unknowns": unknowns,
     }
     result: dict[str, object] = {
+        "activity": _agent_activity(
+            operation="get_listing_details",
+            stage="detail_verification",
+            status="completed",
+            completed_stages=(
+                ["detail_verification", "hard_filter"]
+                if req is not None
+                else ["detail_verification"]
+            ),
+            facts={
+                "listing_id": listing_id,
+                "detail_verified": detail.detail_verified,
+                "passes_current_hard_filters": passes,
+                "remaining_unknown_count": len(unknowns),
+            },
+        ),
         "listing": merged.to_dict(),
         "backend_listing": merged.to_backend_dict(),
         "verification": verification,
@@ -1429,7 +1509,46 @@ def compare_candidates(
         if reference not in requested_output:
             requested_output.append(reference)
 
+    verification_attempted_count = sum(
+        item.get("verification_attempted") is True for item in comparisons
+    )
+    verification_error_count = sum(
+        item.get("verification_error") is not None for item in comparisons
+    )
+    completed_stages: list[str] = []
+    if verification_attempted_count:
+        completed_stages.append("detail_verification")
+    if req is not None and req.soft_preferences:
+        completed_stages.append("soft_preference_evidence")
+    completed_stages.append("candidate_comparison")
+    activity_status = (
+        "partial"
+        if too_many or missing or invalid or verification_error_count
+        else "completed"
+    )
+
     return {
+        "activity": _agent_activity(
+            operation="compare_candidates",
+            stage="candidate_comparison",
+            status=activity_status,
+            completed_stages=completed_stages,
+            facts={
+                "requested_count": len(requested_all),
+                "bounded_requested_count": len(requested_refs),
+                "compared_count": len(comparisons),
+                "missing_count": len(set(missing)),
+                "invalid_count": len(set(invalid)),
+                "verification_attempted_count": verification_attempted_count,
+                "verification_error_count": verification_error_count,
+                "decision_ready_count": sum(
+                    item.get("decision_ready") is True for item in comparisons
+                ),
+                "hard_fail_count": sum(
+                    item.get("hard_constraint_status") == "fail" for item in comparisons
+                ),
+            },
+        ),
         "requested": requested_output,
         "selection_limit": _COMPARISON_LIMIT,
         "too_many_requested": too_many,
@@ -1470,6 +1589,10 @@ Memory and search behavior:
    commute constraints to search_listings so route-matrix enrichment happens before
    deterministic filtering/ranking. If the user removes commute as a requirement,
    pass clear_commute=True instead of resetting unrelated rental requirements.
+5a. Tool responses may include an `activity` object. It is machine-readable execution
+    metadata for integration observability, not user-facing copy or hidden reasoning.
+    Do not quote its schema, invent activity states, percentages, or narrate steps that
+    did not actually occur.
 
 Candidate-first behavior:
 5. For every initial or refined search, call search_listings exactly once. The tool is
