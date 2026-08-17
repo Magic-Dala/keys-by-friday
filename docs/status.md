@@ -90,6 +90,7 @@ Next.js Frontend
 - 🔄 Run a live Google Routes smoke test with a restricted Maps key
 - 🔄 Present structured commute/map evidence in the product frontend
 - 🔄 Comparison and shortlist workflows remain later product work
+- 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 

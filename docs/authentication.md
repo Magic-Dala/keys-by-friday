@@ -186,8 +186,8 @@ HTTP/1.1 401 Unauthorized
 {"detail":"A valid sign-in token is required."}
 ```
 
-This proves that calling the public Cloud Run URL does not bypass application
-authentication.
+This proves that FastAPI rejects a missing Firebase identity in local testing.
+It does not by itself make an internet-facing paid API safe from repeated calls.
 
 ## 9. Run the automatic security tests
 
@@ -233,17 +233,21 @@ AUTH_MODE=firebase
 FIREBASE_PROJECT_ID=${KBF_PROJECT_ID}
 ```
 
-The Cloud Run service may remain reachable with `--allow-unauthenticated`.
-That option permits browsers to reach the FastAPI server; FastAPI still requires
-and verifies a Firebase token on `/api/chat` and `/api/route`. Health and
-readiness endpoints stay available for Cloud Run probes.
+Keep the Cloud Run service private with `--no-allow-unauthenticated` for this
+milestone. Firebase authentication isolates users and conversations, but
+anonymous Firebase identities do not rate-limit aggregate Gemini, RealtyAPI, or
+Routes spending. The deployment guide grants selected developers the Cloud Run
+Invoker role and shows how to test both the Cloud Run IAM and Firebase layers.
 
 As a deployment guardrail, `APP_ENV=production` with `AUTH_MODE=disabled` makes
 `/ready` fail and makes `/api/chat` return HTTP `503`. This prevents a missing
 environment variable from silently exposing a shared production identity.
 
-After deployment, set the frontend's `NEXT_PUBLIC_BACKEND_URL` to the Cloud Run
-URL, rebuild the frontend, and perform the browser Network test again.
+The current browser frontend calls FastAPI directly, so it cannot use a private
+Cloud Run URL as `NEXT_PUBLIC_BACKEND_URL`. Continue browser end-to-end testing
+against the local backend. Before hosting the browser flow, add an approved
+server-side edge and distributed per-user plus aggregate abuse controls; do not
+make Cloud Run public based on Firebase authentication alone.
 
 ## Common problems
 
@@ -253,6 +257,7 @@ URL, rebuild the frontend, and perform the browser Network test again.
 | `/api/chat` returns 401 | Token missing, expired, forged, or for another Firebase project | Frontend/backend project IDs and Authorization header |
 | `/api/chat` returns 503 | Backend Firebase configuration is unavailable | `AUTH_MODE`, `FIREBASE_PROJECT_ID`, and local ADC |
 | `/api/chat` returns 403 | Conversation belongs to another verified uid | Start a new conversation for the current user |
+| Direct Cloud Run URL returns 401/403 | Cloud Run IAM rejected a caller without Invoker credentials | Private deployment is working; use the deployment guide's identity-token test |
 | Browser reports a CORS error | Origin or allowed headers do not match | `FRONTEND_ORIGIN` and restart backend |
 | `npm run check` rejects Node | Installed Node is too old | Install Node 20.9+; Node 24 recommended |
 

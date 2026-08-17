@@ -41,6 +41,12 @@ a separate Places API resolution step.
 
 Before submission, establish a repeatable deployment path, responsive UI, representative demo scenarios, and final end-to-end verification.
 
+The backend stays private while Firebase anonymous sign-in is the only public
+protection. Before enabling direct internet access, add a reviewed public edge,
+distributed per-user rate limits, an aggregate request/cost cap, provider quotas,
+and abuse monitoring. Firebase identity is necessary for ownership but is not a
+rate limiter.
+
 ## Later Decision Features
 
 The detailed Comparison, Shortlist, and Commute sections below remain candidate product features after the integration and structured-result path is solid.
