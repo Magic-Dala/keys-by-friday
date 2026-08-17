@@ -16,6 +16,7 @@ interface RentalMapProps {
   onHighlightListing?: (listingId?: string) => void;
   apiKey?: string;
   mapId?: string;
+  mapVisible?: boolean;
 }
 
 type GoogleMapsLibraries = Awaited<ReturnType<typeof loadGoogleMaps>>;
@@ -104,6 +105,7 @@ export function RentalMap({
   onHighlightListing,
   apiKey,
   mapId,
+  mapVisible = true,
 }: RentalMapProps) {
   const mapElementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map>(null);
@@ -128,7 +130,7 @@ export function RentalMap({
   }, [onHighlightListing, onSelectListing]);
 
   useEffect(() => {
-    if (!apiKey || !mapId || readyListings.length === 0 || !mapElementRef.current || mapRef.current) return;
+    if (!mapVisible || !apiKey || !mapId || readyListings.length === 0 || !mapElementRef.current || mapRef.current) return;
 
     let cancelled = false;
     setLoaderError(undefined);
@@ -155,7 +157,7 @@ export function RentalMap({
     return () => {
       cancelled = true;
     };
-  }, [apiKey, mapId, readyListings.length]);
+  }, [apiKey, mapId, mapVisible, readyListings.length]);
 
   useEffect(() => {
     if (!runtime) return;

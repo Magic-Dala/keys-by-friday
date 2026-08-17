@@ -73,6 +73,25 @@ function turnId(role: Turn["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function useMobileViewport() {
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>();
+
+  useEffect(() => {
+    if (!window.matchMedia) {
+      setIsMobileViewport(false);
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 900px)");
+    const updateViewport = () => setIsMobileViewport(mediaQuery.matches);
+    updateViewport();
+    mediaQuery.addEventListener("change", updateViewport);
+    return () => mediaQuery.removeEventListener("change", updateViewport);
+  }, []);
+
+  return isMobileViewport;
+}
+
 export function RentalSearch() {
   const [draft, setDraft] = useState("");
   const [conversationId, setConversationId] = useState<string>();
@@ -92,6 +111,8 @@ export function RentalSearch() {
   const requestRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const routeSelection = useRouteSelection(conversationId);
+  const isMobileViewport = useMobileViewport();
+  const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
 
   useEffect(() => {
     try {
@@ -385,6 +406,7 @@ export function RentalSearch() {
                       onHighlightListing={highlightOnMap}
                       apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}
                       mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}
+                      mapVisible={mapVisible}
                     />
                   </aside>
                 ) : null}
