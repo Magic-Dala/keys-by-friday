@@ -53,7 +53,7 @@ def _agent_activity(
     operation: str,
     stage: str,
     status: str,
-    completed_stages: list[str],
+    stage_outcomes: list[tuple[str, str]],
     facts: dict[str, object],
 ) -> dict[str, object]:
     """Return deterministic execution metadata for backend/frontend integrations.
@@ -67,7 +67,12 @@ def _agent_activity(
         "operation": operation,
         "stage": stage,
         "status": status,
-        "completed_stages": list(completed_stages),
+        "completed_stages": [
+            name for name, outcome in stage_outcomes if outcome == "completed"
+        ],
+        "stage_outcomes": [
+            {"stage": name, "status": outcome} for name, outcome in stage_outcomes
+        ],
         "facts": dict(facts),
     }
 
@@ -733,7 +738,7 @@ def search_listings(
                 operation="search_listings",
                 stage="requirements",
                 status="requires_input",
-                completed_stages=["requirements"],
+                stage_outcomes=[("requirements", "requires_input")],
                 facts={
                     "provider_search_performed": False,
                     "missing_requirements": list(missing_commute_requirements),
@@ -849,12 +854,14 @@ def search_listings(
         normalized = provider.search(req)
         provider_health = provider.health()
         provider_name = str(provider_health["provider"])
-        search_complete = provider_health.get("search_complete") is not False
         failed_value = provider_health.get("failed_sources", [])
         failed_sources = (
             [str(item) for item in failed_value if str(item)]
             if isinstance(failed_value, (list, tuple))
             else []
+        )
+        search_complete = (
+            provider_health.get("search_complete") is not False and not failed_sources
         )
         provider_search_performed = True
         if force_refresh:
@@ -933,16 +940,34 @@ def search_listings(
         tool_context.state[_CANDIDATES_STATE_KEY] = candidate_payload
         tool_context.state[_VERIFIED_STATE_KEY] = {}
 
-    completed_stages = ["requirements", "listing_search", "hard_filter"]
+    commute_summary = _commute_summary(req, commutes)
+    stage_outcomes: list[tuple[str, str]] = [("requirements", "completed")]
+    if provider_search_performed:
+        stage_outcomes.append(
+            ("listing_search", "completed" if search_complete else "partial")
+        )
+    else:
+        stage_outcomes.append(("session_reuse", "completed"))
     if req.max_commute_minutes is not None:
-        completed_stages.append("commute_check")
+        stage_outcomes.append(
+            (
+                "commute_check",
+                "completed" if commute_summary["status"] == "available" else "partial",
+            )
+        )
+    stage_outcomes.append(("hard_filter", "completed"))
+    activity_status = (
+        "partial"
+        if any(outcome == "partial" for _, outcome in stage_outcomes)
+        else "completed"
+    )
 
     return {
         "activity": _agent_activity(
             operation="search_listings",
-            stage="listing_search",
-            status="completed" if search_complete else "partial",
-            completed_stages=completed_stages,
+            stage="listing_search" if provider_search_performed else "session_reuse",
+            status=activity_status,
+            stage_outcomes=stage_outcomes,
             facts={
                 "provider_search_performed": provider_search_performed,
                 "data_source": data_source,
@@ -970,7 +995,7 @@ def search_listings(
         "commute_evaluations": {
             listing_id: commute.to_dict() for listing_id, commute in commutes.items()
         },
-        "commute_summary": _commute_summary(req, commutes),
+        "commute_summary": commute_summary,
         "effective_requirements": _requirements_to_dict(req),
         "memory_used": previous is not None and not reset_search,
         "verification_candidates": verification_candidates,
@@ -1047,11 +1072,12 @@ def get_route_details(
     """Compute on-demand route geometry for one already-selected search candidate."""
     state = tool_context.state if tool_context is not None else {}
     result = _route_details_from_state(listing_id, destination, travel_mode, state)
+    route_outcome = "completed" if result.get("status") == "available" else "partial"
     result["activity"] = _agent_activity(
         operation="get_route_details",
         stage="commute_check",
-        status="completed",
-        completed_stages=["commute_check"],
+        status=route_outcome,
+        stage_outcomes=[("commute_check", route_outcome)],
         facts={
             "listing_id": listing_id,
             "route_status": result.get("status"),
@@ -1113,11 +1139,22 @@ def get_listing_details(
         "activity": _agent_activity(
             operation="get_listing_details",
             stage="detail_verification",
-            status="completed",
-            completed_stages=(
-                ["detail_verification", "hard_filter"]
+            status="completed" if detail.detail_verified else "partial",
+            stage_outcomes=(
+                [
+                    (
+                        "detail_verification",
+                        "completed" if detail.detail_verified else "partial",
+                    ),
+                    ("hard_filter", "completed"),
+                ]
                 if req is not None
-                else ["detail_verification"]
+                else [
+                    (
+                        "detail_verification",
+                        "completed" if detail.detail_verified else "partial",
+                    )
+                ]
             ),
             facts={
                 "listing_id": listing_id,
@@ -1450,6 +1487,8 @@ def compare_candidates(
     comparisons: list[dict[str, object]] = []
     resolved_requested: list[str] = []
     invalid: list[str] = []
+    verification_attempted_count = 0
+    verification_error_count = 0
     for identifier, candidate in selected:
         resolved_requested.append(identifier)
         verification_attempted = False
@@ -1466,6 +1505,7 @@ def compare_candidates(
             listing = _try_listing_from_dict(candidate_payload)
             if verify_missing and tool_context is not None:
                 verification_attempted = True
+                verification_attempted_count += 1
                 try:
                     cached = get_listing_details(identifier, tool_context=tool_context)
                 except Exception:
@@ -1478,6 +1518,8 @@ def compare_candidates(
                         listing = verified_listing
                         verification_error = None
 
+        if verification_error is not None:
+            verification_error_count += 1
         if listing is None:
             invalid.append(identifier)
             continue
@@ -1509,22 +1551,30 @@ def compare_candidates(
         if reference not in requested_output:
             requested_output.append(reference)
 
-    verification_attempted_count = sum(
-        item.get("verification_attempted") is True for item in comparisons
-    )
-    verification_error_count = sum(
-        item.get("verification_error") is not None for item in comparisons
-    )
-    completed_stages: list[str] = []
+    stage_outcomes: list[tuple[str, str]] = []
     if verification_attempted_count:
-        completed_stages.append("detail_verification")
-    if req is not None and req.soft_preferences:
-        completed_stages.append("soft_preference_evidence")
-    completed_stages.append("candidate_comparison")
+        stage_outcomes.append(
+            (
+                "detail_verification",
+                "partial" if verification_error_count else "completed",
+            )
+        )
+    if comparisons and req is not None and req.soft_preferences:
+        stage_outcomes.append(("soft_preference_evidence", "completed"))
+    comparison_outcome = (
+        "requires_input"
+        if not requested_refs
+        else ("partial" if too_many or missing or invalid else "completed")
+    )
+    stage_outcomes.append(("candidate_comparison", comparison_outcome))
     activity_status = (
-        "partial"
-        if too_many or missing or invalid or verification_error_count
-        else "completed"
+        "requires_input"
+        if comparison_outcome == "requires_input"
+        else (
+            "partial"
+            if comparison_outcome == "partial" or verification_error_count
+            else "completed"
+        )
     )
 
     return {
@@ -1532,7 +1582,7 @@ def compare_candidates(
             operation="compare_candidates",
             stage="candidate_comparison",
             status=activity_status,
-            completed_stages=completed_stages,
+            stage_outcomes=stage_outcomes,
             facts={
                 "requested_count": len(requested_all),
                 "bounded_requested_count": len(requested_refs),

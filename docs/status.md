@@ -5,7 +5,7 @@
 
 ## Current Stage
 
-**Project baseline established: the web integration, shared API contract, structured listing flow, and Google ADK Agent path are all runnable together.**
+**Project baseline established: the web integration, shared API contract, structured listing flow, commute evidence, comparison intelligence, and Google ADK Agent path are runnable together.**
 
 Current end-to-end shape:
 
@@ -15,8 +15,8 @@ Next.js Frontend
 → FastAPI Backend
 → AgentService
 → Google ADK Rental Agent
-→ RealtyAPI / Apartments.com
-→ Agent response
+→ Rental providers + Maps / Routes evidence
+→ Agent response + structured execution metadata
 ```
 
 ## Working Now
@@ -40,13 +40,19 @@ Next.js Frontend
 - ✅ Google ADK Single Rental Agent
 - ✅ `search_listings()`
 - ✅ `get_listing_details()`
+- ✅ `get_route_details()`
+- ✅ `compare_candidates()`
 - ✅ Gemini natural-language requirement parsing
 - ✅ ADK Session State for follow-up refinement
-- ✅ RealtyAPI / Apartments.com real listing search
+- ✅ RealtyAPI-backed multi-source listing search
 - ✅ Canonical normalization
 - ✅ Deterministic hard filtering and ranking
-- ✅ Top-3 detail verification
+- ✅ Deterministic commute enrichment / constraint evaluation when requested
+- ✅ Selected-only detail verification with verified-detail reuse
 - ✅ Search/detail merge and hard-filter revalidation
+- ✅ Evidence-backed evaluation for supported soft preferences such as modern, quiet, near transit, and newer
+- ✅ Deterministic side-by-side candidate comparison with unknown / evidence-only semantics
+- ✅ `rental.agent_activity.v1` execution metadata for Agent-side observability
 - ✅ Source-backed final recommendation text
 
 ### Development Foundation
@@ -66,17 +72,18 @@ Next.js Frontend
 ## In Progress / Next Product Work
 
 - 🔄 Improve frontend rental-result UX beyond the basic listing cards
-- 🔄 Add deterministic commute / Maps evidence when prioritized
-- 🔄 Comparison and shortlist workflows remain later product work
+- 🔄 Expose Agent activity metadata through a backend/frontend progress transport
+- 🔄 Connect comparison intelligence into the final web UX
+- 🔄 Persistent shortlist workflow remains later product work
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 
 ## Latest Verified Evidence
 
-As of the current integration work:
+As of the current Agent decision-intelligence / observability work:
 
-- ✅ Backend API tests: 7 passed
-- ✅ Existing Agent tests: 17 passed
+- ✅ Full Python suite: 112 passed
+- ✅ Agent observability contract suite: 14 passed
 - ✅ Next.js production build passed
 - ✅ TypeScript typecheck passed
 - ✅ Frontend page rendered locally
@@ -94,9 +101,10 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 
 - Geography is currently focused on configured Silicon Valley cities.
 - Some provider fields are unavailable for some listings and must remain unknown.
-- Soft preferences such as quiet / safe / modern do not yet have dedicated enrichment evidence.
-- Commute time is not yet computed and must not be guessed by Gemini.
-- Persistent shortlist / comparison workflows are not complete.
+- Supported soft preferences currently rely on explicit listing evidence; safety remains unsupported unless a trustworthy evidence source is added.
+- Commute is computed only when required inputs and route evidence are available; unavailable or unknown commute data must remain unknown.
+- Comparison works from the current ADK session; a persistent backend shortlist workflow is not complete.
+- Agent execution metadata exists, but a live backend/frontend progress transport is not implemented yet.
 - Background monitoring and landlord outreach are outside the current MVP.
 
 ## Update Rule

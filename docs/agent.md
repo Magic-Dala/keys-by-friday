@@ -46,32 +46,50 @@ The contract exposes:
 - `operation` — the tool that actually ran
 - `stage` — the primary machine-readable execution stage
 - `status` — execution outcome such as `completed`, `partial`, or `requires_input`
-- `completed_stages` — only stages that actually executed
+- `stage_outcomes` — ordered list of `{stage, status}` node outcomes; each node is
+  `completed`, `partial`, or `requires_input`
+- `completed_stages` — derived convenience list containing only nodes whose outcome
+  is actually `completed`
 - `facts` — bounded execution facts such as provider-search reuse, result counts,
   verification counts, missing candidates, or route availability
 
+All `activity` statuses describe a returned terminal outcome. `partial` means the
+tool returned with incomplete evidence or coverage; it does **not** mean the tool is
+still running. In-progress state comes from the ADK tool-call lifecycle before the
+tool response exists.
+
 It intentionally does not expose UI messages, fake percentages, timestamps, or
 chain-of-thought. ADK tool-call lifecycle events can represent the start of work;
-the returned `activity` object describes what is known when that tool completes.
+the returned `activity` object describes what is known when that tool returns. If a
+tool raises before producing a response, the ADK tool-error lifecycle is the failure
+boundary; integrations must not invent a successful `activity` response.
 
-Stable stage names are `requirements`, `listing_search`, `hard_filter`,
-`commute_check`, `detail_verification`, `soft_preference_evidence`, and
-`candidate_comparison`.
+Stable stage names are `requirements`, `listing_search`, `session_reuse`,
+`commute_check`, `hard_filter`, `detail_verification`, `soft_preference_evidence`,
+and `candidate_comparison`.
 
 ## Search Flow
 
 ```text
 User request
 → search_listings()
-→ provider data
-→ normalization
+→ requirements
+→ [provider search → normalization] OR [session reuse]
+→ commute check (only when requested)
 → hard filters
 → deterministic ranking
 → strongest candidates
-→ get_listing_details()
-→ compare_candidates()
+→ selected-only get_listing_details() (when needed)
+→ soft-preference evidence evaluation (when requested)
+→ compare_candidates() (when comparing)
 → final explanation
 ```
+
+The order above is the logical decision path exposed to integrations. A cache-first
+search must report `session_reuse`, not pretend that a provider search occurred.
+Partial provider coverage, unavailable/unknown commute data, and incomplete detail
+verification stay `partial`; they are never upgraded to completed progress for UI
+convenience.
 
 ## Session Rule
 

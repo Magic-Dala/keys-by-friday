@@ -11,8 +11,26 @@ Browser
 → FastAPI Backend
 → AgentService
 → Google ADK Rental Agent
-→ Rental Provider
+   ├→ Rental Provider
+   └→ Maps / Routes Service (when commute evidence is requested)
 ```
+
+Agent tool execution also exposes a presentation-neutral observability boundary:
+
+```text
+ADK tool-call lifecycle (work started)
+→ Agent tool execution
+→ rental.agent_activity.v1 (work outcome + execution facts)
+→ Backend integration layer
+→ optional user-facing progress transport / UI
+```
+
+The Agent owns truthful execution facts only. The Backend may translate those facts
+into a transport-level progress contract, and the Frontend may choose wording and
+animation. The Agent does not emit UI copy, fake percentages, or chain-of-thought.
+This architecture boundary does not itself require SSE, WebSocket, or any specific
+frontend transport. `partial` activity is a terminal incomplete-evidence outcome,
+not an in-progress heartbeat.
 
 ## Responsibilities
 
@@ -29,6 +47,7 @@ Browser
 - validate requests and responses
 - map the web contract to the ADK runtime
 - normalize Agent output for the frontend
+- translate ADK lifecycle/activity metadata if a progress transport is implemented
 
 The backend is an adapter, not a second rental-decision engine.
 
@@ -39,6 +58,7 @@ The backend is an adapter, not a second rental-decision engine.
 - call rental tools
 - use deterministic filtering / ranking boundaries
 - explain verified results and tradeoffs
+- expose deterministic execution activity metadata without presentation concerns
 
 ### Provider
 
@@ -50,6 +70,7 @@ The backend is an adapter, not a second rental-decision engine.
 - Frontend does not import Google ADK or Python modules.
 - Backend does not duplicate Agent search, ranking, or provider logic.
 - Agent does not depend on Next.js or frontend-specific UI types.
+- Agent activity metadata is truthful execution state, not a second UI contract.
 - Provider-specific details should not leak through every layer.
 - Add a new framework or service only when it creates a real capability or authority boundary.
 
