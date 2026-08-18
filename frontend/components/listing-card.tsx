@@ -4,15 +4,20 @@ import {
   ExternalLinkIcon,
   HeartIcon,
 } from "@/components/icons";
+import { commutePresentation, hasMapCoordinates } from "@/lib/map-model";
 import type { Listing } from "@/types/search";
 
 interface ListingCardProps {
   listing: Listing;
   rank: number;
   saved: boolean;
-  selected: boolean;
+  comparisonSelected: boolean;
+  mapSelected: boolean;
+  mapHighlighted: boolean;
   onSave: (listing: Listing) => void;
   onSelect: (listing: Listing) => void;
+  onMapSelect: (listing: Listing) => void;
+  onMapHighlight: (listingId?: string) => void;
 }
 
 function formatPrice(price: number | undefined) {
@@ -35,11 +40,17 @@ export function ListingCard({
   listing,
   rank,
   saved,
-  selected,
+  comparisonSelected,
+  mapSelected,
+  mapHighlighted,
   onSave,
   onSelect,
+  onMapSelect,
+  onMapHighlight,
 }: ListingCardProps) {
   const score = matchScore(listing.score);
+  const hasMapLocation = hasMapCoordinates(listing);
+  const commute = commutePresentation(listing.commute);
   const reasons = listing.reason
     ?.split(";")
     .map((reason) => reason.trim())
@@ -47,9 +58,23 @@ export function ListingCard({
     .slice(0, 3);
 
   return (
-    <article className="listingCard">
+    <article
+      className={`listingCard${mapSelected ? " isMapSelected" : ""}${mapHighlighted ? " isMapHighlighted" : ""}`}
+      onMouseEnter={() => onMapHighlight(listing.id)}
+      onMouseLeave={() => onMapHighlight(undefined)}
+    >
+      <button
+        className="listingMapTarget"
+        type="button"
+        aria-label={`Select ${listing.title ?? listing.address ?? "rental home"} on the map and load its route`}
+        aria-pressed={mapSelected}
+        onClick={() => onMapSelect(listing)}
+        onFocus={() => onMapHighlight(listing.id)}
+        onBlur={() => onMapHighlight(undefined)}
+      />
       <div className="listingTopline">
         <span className="rank">#{rank} recommendation</span>
+        {mapSelected ? <span className="mapSelectedLabel">Selected on map</span> : null}
         {score !== undefined ? <span className="matchScore">{score}% match</span> : null}
       </div>
 
@@ -85,7 +110,13 @@ export function ListingCard({
             )}
           </dd>
         </div>
+        <div>
+          <dt>Commute</dt>
+          <dd className={commute.tone}>{commute.label}</dd>
+        </div>
       </dl>
+
+      {!hasMapLocation ? <p className="mapLocationUnavailable">Map location unavailable</p> : null}
 
       {reasons?.length ? (
         <div className="evidenceBlock">
@@ -111,13 +142,13 @@ export function ListingCard({
           {saved ? "Saved" : "Save"}
         </button>
         <button
-          className={selected ? "actionButton isActive" : "actionButton"}
+          className={comparisonSelected ? "actionButton isActive" : "actionButton"}
           type="button"
-          aria-pressed={selected}
+          aria-pressed={comparisonSelected}
           onClick={() => onSelect(listing)}
         >
           <CompareIcon className="buttonIcon" />
-          {selected ? "Comparing" : "Compare"}
+          {comparisonSelected ? "Comparing" : "Compare"}
         </button>
         {listing.url ? (
           <a className="sourceLink" href={listing.url} target="_blank" rel="noopener noreferrer">

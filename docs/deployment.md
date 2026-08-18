@@ -303,7 +303,7 @@ export KBF_BACKEND_URL="$(gcloud run services describe "$KBF_SERVICE" \
 echo "$KBF_BACKEND_URL"
 ```
 
-Test health and readiness:
+First confirm that an unauthenticated request is rejected by Cloud Run:
 
 ```bash
 curl -i "$KBF_BACKEND_URL/health"

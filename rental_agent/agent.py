@@ -44,6 +44,37 @@ _CACHE_PROVIDER_STATE_KEY = "rental_search_cache_provider"
 _CACHE_COMPLETE_STATE_KEY = "rental_search_cache_complete"
 _CACHE_FAILED_SOURCES_STATE_KEY = "rental_search_cache_failed_sources"
 _VERIFIED_STATE_KEY = "rental_verified_details"
+_COMPARISON_LIMIT = 4
+_ACTIVITY_SCHEMA = "rental.agent_activity.v1"
+
+
+def _agent_activity(
+    *,
+    operation: str,
+    stage: str,
+    status: str,
+    stage_outcomes: list[tuple[str, str]],
+    facts: dict[str, object],
+) -> dict[str, object]:
+    """Return deterministic execution metadata for backend/frontend integrations.
+
+    This intentionally contains no UI copy, percentages, timestamps, or model
+    reasoning. ADK tool-call events can represent operation start; this payload
+    describes only execution facts known when the tool returns.
+    """
+    return {
+        "schema": _ACTIVITY_SCHEMA,
+        "operation": operation,
+        "stage": stage,
+        "status": status,
+        "completed_stages": [
+            name for name, outcome in stage_outcomes if outcome == "completed"
+        ],
+        "stage_outcomes": [
+            {"stage": name, "status": outcome} for name, outcome in stage_outcomes
+        ],
+        "facts": dict(facts),
+    }
 
 
 def _positive_number(value: float | None) -> float | None:
@@ -203,6 +234,15 @@ def _listing_from_dict(value: dict[str, Any]) -> Listing:
     return Listing(**payload)
 
 
+def _try_listing_from_dict(value: object) -> Listing | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return _listing_from_dict(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _commute_from_dict(value: object) -> CommuteResult | None:
     if not isinstance(value, dict) or not value.get("destination"):
         return None
@@ -233,7 +273,7 @@ def _merge_listing_detail(search_listing: Listing | None, detail: Listing) -> Li
         return detail
     merged = search_listing.to_dict()
     for key, value in detail.to_dict().items():
-        if key in {"query_backed_fields", "rent_is_exact", "bedrooms_is_exact"}:
+        if key in {"id", "query_backed_fields", "rent_is_exact", "bedrooms_is_exact"}:
             continue
         if value is not None and value != "" and value != [] and value != ():
             merged[key] = value
@@ -694,6 +734,16 @@ def search_listings(
         if tool_context is not None:
             tool_context.state[_REQUIREMENTS_STATE_KEY] = _requirements_to_dict(req)
         return {
+            "activity": _agent_activity(
+                operation="search_listings",
+                stage="requirements",
+                status="requires_input",
+                stage_outcomes=[("requirements", "requires_input")],
+                facts={
+                    "provider_search_performed": False,
+                    "missing_requirements": list(missing_commute_requirements),
+                },
+            ),
             "status": "requires_input",
             "missing_requirements": missing_commute_requirements,
             "provider": "not_called",
@@ -804,12 +854,14 @@ def search_listings(
         normalized = provider.search(req)
         provider_health = provider.health()
         provider_name = str(provider_health["provider"])
-        search_complete = provider_health.get("search_complete") is not False
         failed_value = provider_health.get("failed_sources", [])
         failed_sources = (
             [str(item) for item in failed_value if str(item)]
             if isinstance(failed_value, (list, tuple))
             else []
+        )
+        search_complete = (
+            provider_health.get("search_complete") is not False and not failed_sources
         )
         provider_search_performed = True
         if force_refresh:
@@ -888,7 +940,43 @@ def search_listings(
         tool_context.state[_CANDIDATES_STATE_KEY] = candidate_payload
         tool_context.state[_VERIFIED_STATE_KEY] = {}
 
+    commute_summary = _commute_summary(req, commutes)
+    stage_outcomes: list[tuple[str, str]] = [("requirements", "completed")]
+    if provider_search_performed:
+        stage_outcomes.append(
+            ("listing_search", "completed" if search_complete else "partial")
+        )
+    else:
+        stage_outcomes.append(("session_reuse", "completed"))
+    if req.max_commute_minutes is not None:
+        stage_outcomes.append(
+            (
+                "commute_check",
+                "completed" if commute_summary["status"] == "available" else "partial",
+            )
+        )
+    stage_outcomes.append(("hard_filter", "completed"))
+    activity_status = (
+        "partial"
+        if any(outcome == "partial" for _, outcome in stage_outcomes)
+        else "completed"
+    )
+
     return {
+        "activity": _agent_activity(
+            operation="search_listings",
+            stage="listing_search" if provider_search_performed else "session_reuse",
+            status=activity_status,
+            stage_outcomes=stage_outcomes,
+            facts={
+                "provider_search_performed": provider_search_performed,
+                "data_source": data_source,
+                "search_complete": search_complete,
+                "failed_source_count": len(failed_sources),
+                "matched_count": len(property_groups),
+                "posting_count": sum(len(group["postings"]) for group in property_groups),
+            },
+        ),
         "provider": provider_name,
         "data_source": data_source,
         "provider_search_performed": provider_search_performed,
@@ -907,7 +995,7 @@ def search_listings(
         "commute_evaluations": {
             listing_id: commute.to_dict() for listing_id, commute in commutes.items()
         },
-        "commute_summary": _commute_summary(req, commutes),
+        "commute_summary": commute_summary,
         "effective_requirements": _requirements_to_dict(req),
         "memory_used": previous is not None and not reset_search,
         "verification_candidates": verification_candidates,
@@ -983,7 +1071,19 @@ def get_route_details(
 ) -> dict[str, object]:
     """Compute on-demand route geometry for one already-selected search candidate."""
     state = tool_context.state if tool_context is not None else {}
-    return _route_details_from_state(listing_id, destination, travel_mode, state)
+    result = _route_details_from_state(listing_id, destination, travel_mode, state)
+    route_outcome = "completed" if result.get("status") == "available" else "partial"
+    result["activity"] = _agent_activity(
+        operation="get_route_details",
+        stage="commute_check",
+        status=route_outcome,
+        stage_outcomes=[("commute_check", route_outcome)],
+        facts={
+            "listing_id": listing_id,
+            "route_status": result.get("status"),
+        },
+    )
+    return result
 
 
 def get_listing_details(
@@ -1012,7 +1112,7 @@ def get_listing_details(
         if not isinstance(listing_payload, dict):
             continue
         if str(listing_payload.get("id")) == listing_id:
-            prior_listing = _listing_from_dict(listing_payload)
+            prior_listing = _try_listing_from_dict(listing_payload)
             prior_commute = _commute_from_dict(candidate.get("commute"))
             rank_value = candidate.get("current_search_rank")
             current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else index + 1
@@ -1036,6 +1136,33 @@ def get_listing_details(
         "remaining_unknowns": unknowns,
     }
     result: dict[str, object] = {
+        "activity": _agent_activity(
+            operation="get_listing_details",
+            stage="detail_verification",
+            status="completed" if detail.detail_verified else "partial",
+            stage_outcomes=(
+                [
+                    (
+                        "detail_verification",
+                        "completed" if detail.detail_verified else "partial",
+                    ),
+                    ("hard_filter", "completed"),
+                ]
+                if req is not None
+                else [
+                    (
+                        "detail_verification",
+                        "completed" if detail.detail_verified else "partial",
+                    )
+                ]
+            ),
+            facts={
+                "listing_id": listing_id,
+                "detail_verified": detail.detail_verified,
+                "passes_current_hard_filters": passes,
+                "remaining_unknown_count": len(unknowns),
+            },
+        ),
         "listing": merged.to_dict(),
         "backend_listing": merged.to_backend_dict(),
         "verification": verification,
@@ -1050,10 +1177,447 @@ def get_listing_details(
     return result
 
 
+def _candidate_references(value: str) -> list[str]:
+    normalized = re.sub(r"\s+and\s+", ",", value.strip(), flags=re.IGNORECASE)
+    raw = [item.strip() for item in re.split(r"[,\s]+", normalized) if item.strip()]
+    return list(dict.fromkeys(raw))
+
+
+def _soft_preference_text_fields(listing: Listing) -> list[tuple[str, str]]:
+    values: list[tuple[str, str]] = []
+    if listing.description:
+        values.append(("description", listing.description))
+    for amenity in listing.amenities:
+        if amenity:
+            values.append(("amenities", amenity))
+    return values
+
+
+def _matched_text_evidence(
+    listing: Listing,
+    phrases: tuple[str, ...],
+) -> list[dict[str, object]]:
+    evidence: list[dict[str, object]] = []
+    for field_name, value in _soft_preference_text_fields(listing):
+        folded = value.casefold()
+        for phrase in phrases:
+            pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)")
+            match = pattern.search(folded)
+            if match is not None:
+                prefix = folded[max(0, match.start() - 8) : match.start()]
+                if not phrase.startswith(("not ", "no ")) and re.search(
+                    r"\b(?:not|no)\s+$", prefix
+                ):
+                    continue
+                evidence.append({"field": field_name, "match": phrase})
+    return evidence
+
+
+def _soft_preference_evidence(
+    listing: Listing,
+    preferences: tuple[str, ...],
+) -> list[dict[str, object]]:
+    supported_phrases = {
+        "modern": (
+            "modern",
+            "contemporary",
+            "renovated",
+            "remodeled",
+            "updated interior",
+            "updated kitchen",
+            "updated bathroom",
+        ),
+        "quiet": ("quiet", "peaceful", "serene", "soundproof"),
+        "near transit": (
+            "near transit",
+            "public transit",
+            "caltrain",
+            "bart",
+            "light rail",
+            "vta",
+        ),
+        "newer": ("new construction", "newly built", "newer construction"),
+    }
+    contradicted_phrases = {
+        "modern": (
+            "not modern",
+            "dated interior",
+            "needs renovation",
+            "original kitchen",
+            "original bathroom",
+        ),
+        "quiet": ("not quiet", "noisy", "noise-prone"),
+        "near transit": (
+            "no public transit",
+            "not near transit",
+            "no caltrain",
+            "not near caltrain",
+            "no bart",
+            "not near bart",
+            "no light rail",
+            "no vta",
+        ),
+        "newer": ("not new construction", "not newly built"),
+    }
+    result: list[dict[str, object]] = []
+    for preference in preferences:
+        normalized = preference.strip().casefold()
+        if normalized not in supported_phrases:
+            result.append({"preference": preference, "status": "unknown", "evidence": []})
+            continue
+        negative = _matched_text_evidence(listing, contradicted_phrases[normalized])
+        if negative:
+            result.append(
+                {"preference": preference, "status": "contradicted", "evidence": negative}
+            )
+            continue
+        positive = _matched_text_evidence(listing, supported_phrases[normalized])
+        if positive:
+            result.append(
+                {"preference": preference, "status": "supported", "evidence": positive}
+            )
+            continue
+        if normalized == "newer" and listing.year_built is not None:
+            result.append(
+                {
+                    "preference": preference,
+                    "status": "evidence_only",
+                    "evidence": [{"field": "year_built", "value": listing.year_built}],
+                }
+            )
+            continue
+        result.append({"preference": preference, "status": "unknown", "evidence": []})
+    return result
+
+
+def _comparison_candidate(
+    *,
+    candidate: dict[str, Any],
+    listing: Listing,
+    req: SearchRequirements | None,
+    commute: CommuteResult | None,
+    verification_attempted: bool,
+    verification_error: str | None = None,
+) -> dict[str, object]:
+    canonical = listing.to_backend_dict()
+    completeness = canonical["completeness"]
+    evidence = canonical["evidence"]
+    critical_unknown = list(completeness["criticalUnknownFields"])
+    critical_query_backed = list(evidence["criticalQueryBackedFields"])
+    comparison_unknowns = list(
+        dict.fromkeys([*critical_unknown, *critical_query_backed])
+    )
+    decision_unknowns = list(comparison_unknowns)
+    passes = passes_hard_filters(listing, req, commute) if req is not None else None
+
+    rank_value = candidate.get("current_search_rank")
+    current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else None
+    pricing = canonical["pricing"]
+    property_data = canonical["property"]
+    policies = canonical["policies"]
+    query_backed = set(evidence["queryBackedFields"])
+    pets_query_backed = "policies.petsAllowed" in query_backed
+    parking_query_backed = "policies.parkingAvailable" in query_backed
+    required_query_backed: list[str] = []
+    if req is not None:
+        if req.pets_required and pets_query_backed:
+            required_query_backed.append("policies.petsAllowed")
+        if req.parking_required and parking_query_backed:
+            required_query_backed.append("policies.parkingAvailable")
+        if req.min_bathrooms is not None:
+            if listing.bathrooms is not None:
+                if "property.bathrooms" in query_backed:
+                    required_query_backed.append("property.bathrooms")
+            elif "property.bathroomsMinEvidence" in query_backed:
+                required_query_backed.append("property.bathroomsMinEvidence")
+        if req.max_bathrooms is not None and "property.bathrooms" in query_backed:
+            required_query_backed.append("property.bathrooms")
+    required_query_backed = list(dict.fromkeys(required_query_backed))
+    authoritative_passes = passes
+    if req is not None and required_query_backed:
+        neutral = listing.to_dict()
+        if "policies.petsAllowed" in required_query_backed:
+            neutral["pets_allowed"] = True
+        if "policies.parkingAvailable" in required_query_backed:
+            neutral["parking_available"] = True
+        if "property.bathrooms" in required_query_backed:
+            neutral_bathrooms = (
+                req.min_bathrooms
+                if req.min_bathrooms is not None
+                else req.max_bathrooms
+            )
+            neutral["bathrooms"] = neutral_bathrooms
+            neutral["bathrooms_min_evidence"] = None
+        elif "property.bathroomsMinEvidence" in required_query_backed:
+            neutral["bathrooms"] = None
+            neutral["bathrooms_min_evidence"] = req.min_bathrooms
+        authoritative_passes = passes_hard_filters(
+            _listing_from_dict(neutral), req, commute
+        )
+    comparison_ready = bool(completeness["comparisonReady"])
+    decision_ready = bool(completeness["decisionReady"]) and passes is not False
+    if authoritative_passes is None:
+        hard_constraint_status = "not_evaluated"
+        satisfies_current_requirements = None
+    elif not authoritative_passes:
+        hard_constraint_status = "fail"
+        satisfies_current_requirements = False
+    elif required_query_backed:
+        hard_constraint_status = "evidence_only"
+        satisfies_current_requirements = None
+    else:
+        hard_constraint_status = "pass"
+        satisfies_current_requirements = True
+
+    return {
+        "listing_id": listing.id,
+        "current_search_rank": current_rank,
+        "address": listing.address,
+        "source": listing.source,
+        "price": pricing["rent"],
+        "price_range": {"min": pricing["rentMin"], "max": pricing["rentMax"]},
+        "beds": property_data["bedrooms"],
+        "bedroom_bounds": {
+            "min": property_data["bedroomsMin"],
+            "max": property_data["bedroomsMax"],
+        },
+        "bathrooms": {
+            "exact": property_data["bathrooms"],
+            "minimum_evidence": property_data["bathroomsMinEvidence"],
+        },
+        "square_footage": property_data["squareFootage"],
+        "year_built": property_data["yearBuilt"],
+        "pet_policy": {
+            "allowed": None if pets_query_backed else policies["petsAllowed"],
+            "query_backed_evidence": policies["petsAllowed"] if pets_query_backed else None,
+            "policy": policies["petPolicy"],
+            "confirmed": (
+                policies["petsAllowed"] is not None
+                and not pets_query_backed
+            ),
+        },
+        "parking_policy": {
+            "available": None if parking_query_backed else policies["parkingAvailable"],
+            "query_backed_evidence": (
+                policies["parkingAvailable"] if parking_query_backed else None
+            ),
+            "policy": policies["parkingPolicy"],
+            "confirmed": (
+                policies["parkingAvailable"] is not None
+                and not parking_query_backed
+            ),
+        },
+        "commute": commute.to_dict() if commute is not None else None,
+        "hard_constraint_status": hard_constraint_status,
+        "satisfies_current_requirements": satisfies_current_requirements,
+        "hard_constraint_evidence_only": required_query_backed,
+        "detail_verified": listing.detail_verified,
+        "comparison_unknowns": comparison_unknowns,
+        "decision_unknowns": decision_unknowns,
+        "soft_preference_evidence": _soft_preference_evidence(
+            listing, req.soft_preferences if req is not None else ()
+        ),
+        "comparison_ready": comparison_ready,
+        "decision_ready": decision_ready,
+        "verification_attempted": verification_attempted,
+        "verification_error": verification_error,
+        "canonical_listing": canonical,
+    }
+
+
+def compare_candidates(
+    listing_ids: str,
+    verify_missing: bool = True,
+    tool_context: Optional[ToolContext] = None,
+) -> dict[str, object]:
+    """Compare up to four candidates already present in the current ADK session.
+
+    `listing_ids` accepts comma/space-separated listing IDs and visible rank references
+    such as `#1,#3`. This tool never performs a broad provider search. Existing verified
+    detail state is reused; with `verify_missing=True`, only selected unverified listings
+    may call the provider detail path.
+    """
+    state = tool_context.state if tool_context is not None else {}
+    state_get = getattr(state, "get", None)
+    req = (
+        _requirements_from_dict(state_get(_REQUIREMENTS_STATE_KEY))
+        if callable(state_get)
+        else None
+    )
+    stored = state_get(_CANDIDATES_STATE_KEY, []) if callable(state_get) else []
+    candidates = [item for item in stored if isinstance(item, dict)] if isinstance(stored, list) else []
+    verified_value = state_get(_VERIFIED_STATE_KEY, {}) if callable(state_get) else {}
+    verified = dict(verified_value) if isinstance(verified_value, dict) else {}
+
+    requested_all = _candidate_references(listing_ids)
+    too_many = len(requested_all) > _COMPARISON_LIMIT
+    requested_refs = requested_all[:_COMPARISON_LIMIT]
+
+    by_id: dict[str, dict[str, Any]] = {}
+    by_rank: dict[int, dict[str, Any]] = {}
+    for candidate in candidates:
+        listing_payload = candidate.get("listing")
+        if not isinstance(listing_payload, dict) or not listing_payload.get("id"):
+            continue
+        identifier = str(listing_payload["id"])
+        by_id.setdefault(identifier, candidate)
+        rank_value = candidate.get("current_search_rank")
+        if isinstance(rank_value, (int, float)):
+            by_rank.setdefault(int(rank_value), candidate)
+
+    selected: list[tuple[str, dict[str, Any]]] = []
+    missing: list[str] = []
+    seen_ids: set[str] = set()
+    for reference in requested_refs:
+        candidate = None
+        if reference.startswith("#") and reference[1:].isdigit():
+            candidate = by_rank.get(int(reference[1:]))
+        else:
+            candidate = by_id.get(reference)
+        if candidate is None:
+            missing.append(reference)
+            continue
+        listing_payload = candidate.get("listing")
+        identifier = str(listing_payload["id"])
+        if identifier in seen_ids:
+            continue
+        seen_ids.add(identifier)
+        selected.append((identifier, candidate))
+
+    comparisons: list[dict[str, object]] = []
+    resolved_requested: list[str] = []
+    invalid: list[str] = []
+    verification_attempted_count = 0
+    verification_error_count = 0
+    for identifier, candidate in selected:
+        resolved_requested.append(identifier)
+        verification_attempted = False
+        verification_error = None
+        cached = verified.get(identifier)
+        listing_payload: object = None
+        if isinstance(cached, dict):
+            listing_payload = cached.get("listing")
+        listing = _try_listing_from_dict(listing_payload)
+        if listing_payload is not None and listing is None:
+            verification_error = "invalid_cached_detail"
+        if listing is None:
+            candidate_payload = candidate.get("listing")
+            listing = _try_listing_from_dict(candidate_payload)
+            if verify_missing and tool_context is not None:
+                verification_attempted = True
+                verification_attempted_count += 1
+                try:
+                    cached = get_listing_details(identifier, tool_context=tool_context)
+                except Exception:
+                    verification_error = "detail_lookup_failed"
+                else:
+                    verified_listing = _try_listing_from_dict(cached.get("listing"))
+                    if verified_listing is None:
+                        verification_error = "invalid_detail_payload"
+                    else:
+                        listing = verified_listing
+                        verification_error = None
+
+        if verification_error is not None:
+            verification_error_count += 1
+        if listing is None:
+            invalid.append(identifier)
+            continue
+        commute = _commute_from_dict(candidate.get("commute"))
+        comparisons.append(
+            _comparison_candidate(
+                candidate=candidate,
+                listing=listing,
+                req=req,
+                commute=commute,
+                verification_attempted=verification_attempted,
+                verification_error=verification_error,
+            )
+        )
+
+    requested_output = []
+    for reference in requested_refs:
+        if reference in missing:
+            requested_output.append(reference)
+            continue
+        if reference.startswith("#") and reference[1:].isdigit():
+            candidate = by_rank.get(int(reference[1:]))
+            listing_payload = candidate.get("listing") if candidate else None
+            if isinstance(listing_payload, dict) and listing_payload.get("id"):
+                identifier = str(listing_payload["id"])
+                if identifier not in requested_output:
+                    requested_output.append(identifier)
+            continue
+        if reference not in requested_output:
+            requested_output.append(reference)
+
+    stage_outcomes: list[tuple[str, str]] = []
+    if verification_attempted_count:
+        stage_outcomes.append(
+            (
+                "detail_verification",
+                "partial" if verification_error_count else "completed",
+            )
+        )
+    if comparisons and req is not None and req.soft_preferences:
+        stage_outcomes.append(("soft_preference_evidence", "completed"))
+    comparison_outcome = (
+        "requires_input"
+        if not requested_refs
+        else ("partial" if too_many or missing or invalid else "completed")
+    )
+    stage_outcomes.append(("candidate_comparison", comparison_outcome))
+    activity_status = (
+        "requires_input"
+        if comparison_outcome == "requires_input"
+        else (
+            "partial"
+            if comparison_outcome == "partial" or verification_error_count
+            else "completed"
+        )
+    )
+
+    return {
+        "activity": _agent_activity(
+            operation="compare_candidates",
+            stage="candidate_comparison",
+            status=activity_status,
+            stage_outcomes=stage_outcomes,
+            facts={
+                "requested_count": len(requested_all),
+                "bounded_requested_count": len(requested_refs),
+                "compared_count": len(comparisons),
+                "missing_count": len(set(missing)),
+                "invalid_count": len(set(invalid)),
+                "verification_attempted_count": verification_attempted_count,
+                "verification_error_count": verification_error_count,
+                "decision_ready_count": sum(
+                    item.get("decision_ready") is True for item in comparisons
+                ),
+                "hard_fail_count": sum(
+                    item.get("hard_constraint_status") == "fail" for item in comparisons
+                ),
+            },
+        ),
+        "requested": requested_output,
+        "selection_limit": _COMPARISON_LIMIT,
+        "too_many_requested": too_many,
+        "missing_listing_ids": list(dict.fromkeys(missing)),
+        "invalid_listing_ids": list(dict.fromkeys(invalid)),
+        "candidate_count": len(comparisons),
+        "candidates": comparisons,
+        "comparison_policy": {
+            "provider_search_performed": False,
+            "selected_only_verification": True,
+            "unknown_is_not_pass": True,
+        },
+    }
+
+
 root_agent = Agent(
     name="single_rental_agent",
     model=build_ordered_gemini(),
-    description="Finds, verifies, and explains the best Silicon Valley rentals.",
+    description="Finds, verifies, compares, and explains Silicon Valley rentals.",
     instruction="""
 You are Keys by Friday's single rental search agent. There are no sub-agents.
 
@@ -1075,6 +1639,10 @@ Memory and search behavior:
    commute constraints to search_listings so route-matrix enrichment happens before
    deterministic filtering/ranking. If the user removes commute as a requirement,
    pass clear_commute=True instead of resetting unrelated rental requirements.
+5a. Tool responses may include an `activity` object. It is machine-readable execution
+    metadata for integration observability, not user-facing copy or hidden reasoning.
+    Do not quote its schema, invent activity states, percentages, or narrate steps that
+    did not actually occur.
 
 Candidate-first behavior:
 5. For every initial or refined search, call search_listings exactly once. The tool is
@@ -1100,6 +1668,15 @@ Candidate-first behavior:
 12a. Use get_route_details only for a selected/specific listing when route geometry or
      route detail is requested. Never calculate full route polylines for broad results.
      Commute status unknown/unavailable is not evidence that a hard commute limit passed.
+12b. When the user asks to compare selected results (for example "compare #1 and #3",
+     "compare these two", or "which of these is better"), use compare_candidates.
+     Do not call search_listings again unless the user actually changed search requirements.
+     compare_candidates may verify only the selected candidates, reuses prior verified
+     details, and deterministically re-checks the current hard constraints.
+12c. In comparison answers, use only structured facts and soft_preference_evidence from
+     compare_candidates. `supported` requires explicit provider text, `evidence_only`
+     is evidence without a deterministic conclusion, and `unknown` is not a pass.
+     Never fabricate a soft-preference score or infer quiet/safety/transit from location.
 
 Answer format:
 13. Start every broad-search/refinement answer with exactly these two short lines:
@@ -1124,7 +1701,13 @@ Answer format:
 19. After the result list, add only one brief sentence inviting the user to refine by
     budget, beds/baths, parking, pets, source, or a specific property.
 20. Never invent listing facts, safety, commute, schools, crime, or unavailable data.
+21. The broad-search formatting rules above apply only to search/refinement answers.
+    Comparison answers should focus only on the selected candidates: verified facts,
+    hard-constraint failures, trade-offs, explicit unknowns, and soft-preference evidence.
+    A candidate with hard_constraint_status=fail must not be recommended as satisfying
+    the current requirements. Conditional recommendations are allowed when uncertainty
+    is stated explicitly.
 
 """.strip(),
-    tools=[search_listings, get_listing_details, get_route_details],
+    tools=[search_listings, get_listing_details, get_route_details, compare_candidates],
 )
