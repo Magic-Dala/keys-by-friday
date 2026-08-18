@@ -30,6 +30,10 @@ class AgentServiceError(RuntimeError):
     """Stable backend boundary for failures from the ADK execution path."""
 
 
+class ConversationAccessError(AgentServiceError):
+    """A user attempted to continue a conversation owned by another user."""
+
+
 _LOG_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
 _REALTYAPI_MULTI_SOURCES = ("apartments", "zillow", "realtor")
 
@@ -507,6 +511,8 @@ class AgentService:
                 "Agent timeout must be a finite number greater than zero."
             )
         self._runner = None
+        self._conversation_owners: dict[str, str] = {}
+        self._conversation_lock = asyncio.Lock()
 
     def _get_runner(self):
         if self._runner is None:
@@ -516,8 +522,27 @@ class AgentService:
             self._runner = InMemoryRunner(agent=root_agent, app_name="keys_by_friday_web")
         return self._runner
 
-    async def send_message(self, message: str, conversation_id: str | None = None) -> SearchResponse:
+    async def _claim_conversation(
+        self, conversation_id: str, user_id: str
+    ) -> None:
+        async with self._conversation_lock:
+            owner = self._conversation_owners.get(conversation_id)
+            if owner is None:
+                self._conversation_owners[conversation_id] = user_id
+            elif owner != user_id:
+                raise ConversationAccessError(
+                    "Conversation is owned by a different user."
+                )
+
+    async def send_message(
+        self,
+        message: str,
+        conversation_id: str | None = None,
+        *,
+        user_id: str,
+    ) -> SearchResponse:
         conversation_id = conversation_id or str(uuid4())
+        await self._claim_conversation(conversation_id, user_id)
         if self.mode == "stub":
             return SearchResponse(
                 conversationId=conversation_id,
@@ -533,7 +558,7 @@ class AgentService:
         )
         try:
             response = await asyncio.wait_for(
-                self._send_adk_message(message, conversation_id),
+                self._send_adk_message(message, conversation_id, user_id),
                 timeout=self.timeout_seconds,
             )
         except TimeoutError as exc:
@@ -563,13 +588,12 @@ class AgentService:
         return response
 
     async def _send_adk_message(
-        self, message: str, conversation_id: str
+        self, message: str, conversation_id: str, user_id: str
     ) -> SearchResponse:
 
         from google.genai import types
 
         runner = self._get_runner()
-        user_id = "web-user"
         try:
             session = await runner.session_service.get_session(
                 app_name=runner.app_name, user_id=user_id, session_id=conversation_id
@@ -659,16 +683,18 @@ class AgentService:
         *,
         destination: str = "",
         mode: str = "",
+        user_id: str,
     ) -> RouteDetailResponse:
         from rental_agent.agent import _route_details_from_state
 
+        await self._claim_conversation(conversation_id, user_id)
         state: object = {}
         if self.mode == "adk":
             runner = self._get_runner()
             try:
                 session = await runner.session_service.get_session(
                     app_name=runner.app_name,
-                    user_id="web-user",
+                    user_id=user_id,
                     session_id=conversation_id,
                 )
             except Exception as exc:

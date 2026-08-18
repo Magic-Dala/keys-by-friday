@@ -15,7 +15,7 @@ Current Hackathon priority order:
 Phase 1  Web integration                 ✅ Baseline complete
 Phase 2  Structured API listings[]       ✅ Baseline complete
 Phase 3  Frontend rental-result UX       🔄 Foundation complete; product polish next
-Phase 4  Commute / Maps evidence         ⬜ Planned
+Phase 4  Commute / Maps evidence         🔄 Backend/API complete; live setup/UI pending
 Phase 5  Comparison + Shortlist          ⬜ Planned
 Phase 6  Demo polish + deployment        ⬜ Planned
 ```
@@ -30,9 +30,22 @@ Normalize source-backed Agent search / verification state into the `/api/chat` `
 
 Build listing cards, source links, recommendation / tradeoff presentation, loading and error states, and follow-up conversation on the stable `/api/chat` contract.
 
+## Phase 4 — Commute / Maps Evidence
+
+The Google Routes boundary, deterministic commute filtering, map coordinates,
+and selected-route API are implemented. Remaining work is live-key validation,
+frontend presentation, and deciding whether natural-language destinations need
+a separate Places API resolution step.
+
 ## Phase 6 — Demo Polish and Deployment
 
 Before submission, establish a repeatable deployment path, responsive UI, representative demo scenarios, and final end-to-end verification.
+
+The backend stays private while Firebase anonymous sign-in is the only public
+protection. Before enabling direct internet access, add a reviewed public edge,
+distributed per-user rate limits, an aggregate request/cost cap, provider quotas,
+and abuse monitoring. Firebase identity is necessary for ownership but is not a
+rate limiter.
 
 ## Later Decision Features
 
