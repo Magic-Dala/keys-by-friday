@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Single-agent Silicon Valley rental search MVP"
 requires-python = ">=3.11"
 dependencies = [
-  "google-adk>=2.1.0,<3.0.0",
+  "google-adk[db]>=2.1.0,<3.0.0",
   "httpx>=0.28,<1.0",
   "python-dotenv>=1.0,<2.0",
 ]
@@ -15,8 +15,10 @@ kbf = "rental_agent.cli:main"
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<9.0"]
 backend = [
+  "asyncpg>=0.30,<1.0",
   "fastapi>=0.116,<1.0",
   "firebase-admin>=7.0,<8.0",
+  "greenlet>=3.2,<4.0",
   "uvicorn[standard]>=0.35,<1.0",
 ]
 

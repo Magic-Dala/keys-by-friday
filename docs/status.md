@@ -95,6 +95,10 @@ Next.js Frontend
 - ✅ Shortlist snapshots preserve structured coordinate and commute evidence
 - ✅ Fake in-memory repositories cover persistence without cloud quota in CI
 - ✅ Firestore client rules deny direct browser access
+- ✅ Configurable official ADK session service: memory locally, database in production
+- ✅ Restart-safe ADK event history and Agent state through PostgreSQL / Cloud SQL
+- ✅ Same-conversation turns serialized to prevent stale simultaneous follow-ups
+- ✅ Python 3.12 pinned consistently for macOS development and the backend container
 
 ## In Progress / Next Product Work
 
@@ -110,9 +114,10 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 ## Latest Verified Evidence
 
-As of the current Agent decision-intelligence / observability and Firebase-auth integration work:
+As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 155 passed, including Firebase auth, Firestore persistence, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 162 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, restart restoration, same-conversation concurrency, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Milestone 4 focused ADK session/runtime suite: 3 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
@@ -140,7 +145,9 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 - Natural-language destination resolution has not yet been validated with a live key; Places API was intentionally not added by the Maps boundary PR.
 - Deterministic comparison works from the current Agent results, while shortlist snapshots persist through Firestore.
 - Agent execution metadata exists, but a live backend/frontend progress transport is not implemented yet.
-- Shortlists and conversation ownership/metadata persist in Firestore, but the full ADK session and transcript remain in process memory.
+- Full ADK sessions persist in database mode. The local memory mode intentionally
+  loses them on restart, and the current whole-turn lock is process-local, so
+  multi-instance deployment needs a distributed-coordination review.
 - Background monitoring and landlord outreach are outside the current MVP.
 
 ## Update Rule

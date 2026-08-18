@@ -25,6 +25,7 @@ APP_ENV=local \
 AGENT_MODE=stub \
 AUTH_MODE=disabled \
 PERSISTENCE_MODE=memory \
+ADK_SESSION_MODE=memory \
 LISTING_PROVIDER=mock \
 uv run --extra backend uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -90,6 +91,7 @@ docker run --rm \
   -e AGENT_MODE=stub \
   -e AUTH_MODE=disabled \
   -e PERSISTENCE_MODE=memory \
+  -e ADK_SESSION_MODE=memory \
   -e LISTING_PROVIDER=mock \
   keys-by-friday-backend:local
 ```
@@ -136,6 +138,8 @@ export KBF_SERVICE='keys-by-friday-backend-1'
 export KBF_FRONTEND_ORIGIN='http://localhost:3000'
 export KBF_SERVICE_ACCOUNT="kbf-backend@${KBF_PROJECT_ID}.iam.gserviceaccount.com"
 export KBF_INVOKER_EMAIL="$(gcloud config get-value account)"
+export KBF_CLOUD_SQL_INSTANCE='kbf-adk-sessions'
+export KBF_CLOUD_SQL_CONNECTION_NAME="${KBF_PROJECT_ID}:${KBF_REGION}:${KBF_CLOUD_SQL_INSTANCE}"
 ```
 
 These values are configuration, not secrets.
@@ -151,6 +155,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
+  sqladmin.googleapis.com \
   firestore.googleapis.com \
   aiplatform.googleapis.com \
   routes.googleapis.com
@@ -169,6 +174,10 @@ gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
 gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
   --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
   --role='roles/datastore.user'
+
+gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
+  --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
+  --role='roles/cloudsql.client'
 ```
 
 The `Vertex AI User` role lets this backend identity call Gemini through Vertex
@@ -179,6 +188,29 @@ account, so do not create a Gemini API key and do not set
 The `Cloud Datastore User` role is Firestore's application read/write role. It
 allows the backend service account to store conversation metadata and each
 verified user's shortlist without granting index-administration access.
+
+The `Cloud SQL Client` role lets the same backend identity open the encrypted
+Cloud SQL connection used by ADK session storage. It does not grant Cloud SQL
+administration permission.
+
+## Prepare persistent ADK session storage
+
+Create a small PostgreSQL Cloud SQL instance only when the team is ready for a
+billable hosted test. Use the same region as Cloud Run, create database
+`kbf_adk_sessions`, create non-admin user `kbf_adk`, and copy the instance
+connection name.
+
+Store this async SQLAlchemy URL in Secret Manager as
+`kbf-adk-session-db-url`:
+
+```text
+postgresql+asyncpg://kbf_adk:URL_SAFE_PASSWORD@/kbf_adk_sessions?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_ID
+```
+
+The password must be URL encoded if it contains URL punctuation. Do not put the
+URL in `--set-env-vars`, source control, screenshots, or chat. Detailed macOS,
+local SQLite, Cloud SQL, and restart instructions are in
+`docs/adk-sessions.md`.
 
 ## Store external API keys in Secret Manager
 
@@ -205,6 +237,10 @@ gcloud secrets add-iam-policy-binding kbf-realtyapi-key \
   --role='roles/secretmanager.secretAccessor'
 
 gcloud secrets add-iam-policy-binding kbf-google-maps-api-key \
+  --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
+  --role='roles/secretmanager.secretAccessor'
+
+gcloud secrets add-iam-policy-binding kbf-adk-session-db-url \
   --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
   --role='roles/secretmanager.secretAccessor'
 ```
@@ -241,8 +277,9 @@ gcloud run deploy "$KBF_SERVICE" \
   --min-instances 0 \
   --max-instances 1 \
   --timeout 180 \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
-  --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1'
+  --add-cloudsql-instances "$KBF_CLOUD_SQL_CONNECTION_NAME" \
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),ADK_SESSION_MODE=database,LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_SEARCH_MODEL=gemini-3.7-flash,GEMINI_MODELS=gemini-3.7-flash,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1,ADK_SESSION_DATABASE_URL=kbf-adk-session-db-url:1'
 ```
 
 Grant only your current Google account permission to invoke the private demo
@@ -281,11 +318,12 @@ the frontend sends Firebase ID tokens, then add server-side distributed limits
 for each uid plus an aggregate project-level cap. Provider quotas and billing
 alerts are additional safeguards; a billing alert alone does not stop requests.
 
-Firestore now keeps conversation ownership/metadata and shortlists across
-instances. `max-instances=1` still reduces the chance that the current in-memory
-ADK session is split across instances. A restart or scale-to-zero event can
-still remove full Agent conversation state; metadata persistence is not the same
-as ADK session persistence.
+Firestore keeps conversation ownership/metadata and shortlists. ADK's official
+database session service keeps Agent events and state in Cloud SQL, so a restart
+or scale-to-zero event does not erase follow-up context. `max-instances=1`
+remains intentional because the backend's whole-turn same-conversation lock is
+process-local; review distributed turn coordination before scaling above one
+instance.
 
 After deployment, configure an HTTP startup/readiness probe for `/ready` and an
 HTTP liveness probe for `/health` in the Cloud Run console under **Containers,

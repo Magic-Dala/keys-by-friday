@@ -50,3 +50,4 @@ Thumbs.db
 
 # ADK local runtime state
 .adk/
+.local/

@@ -2,6 +2,10 @@
 
 AI rental search built with **Next.js + FastAPI + Google ADK**.
 
+Production uses Firestore for product data and an official persistent ADK
+database session service for restart-safe conversational state. See
+`docs/firestore.md` and `docs/adk-sessions.md`.
+
 If you just want to run the project, start here.
 
 ## Quick Start
@@ -132,10 +136,8 @@ Next.js Frontend :3000
 FastAPI Backend :8000
   ↓
 AgentService
-  ↓
-Google ADK Rental Agent
-  ↓
-Rental Provider
+  ├→ Google ADK Rental Agent → Rental Provider
+  └→ ADK SessionService → memory locally / PostgreSQL in production
 ```
 
 The frontend talks only to the FastAPI API. The backend owns the ADK adapter. Rental search, ranking, verification, and provider logic stay in `rental_agent/**`.
@@ -184,6 +186,7 @@ GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 | `docs/authentication.md` | Firebase identity setup and Milestone 2 tests |
 | `docs/maps.md` | Google Routes / commute setup and testing |
 | `docs/firestore.md` | Firestore repositories, shortlist persistence, and Milestone 3 tests |
+| `docs/adk-sessions.md` | Persistent ADK sessions, restart test, concurrency, and Milestone 4 setup |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |
