@@ -5,7 +5,7 @@
 
 ## Current Stage
 
-**Project baseline established: the web integration, shared API contract, structured listing flow, and Google ADK Agent path are all runnable together.**
+**Project baseline established: the web integration, shared API contract, structured listing flow, commute evidence, comparison intelligence, and Google ADK Agent path are runnable together.**
 
 Current end-to-end shape:
 
@@ -16,9 +16,8 @@ Next.js Frontend
 → Verified Firebase uid
 → AgentService
 → Google ADK Rental Agent
-→ RealtyAPI / Apartments.com
-→ Google Routes when commute is requested and configured
-→ Agent response
+→ RealtyAPI-backed rental providers + Google Routes evidence when configured
+→ Agent response + structured execution metadata
 ```
 
 ## Working Now
@@ -42,13 +41,19 @@ Next.js Frontend
 - ✅ Google ADK Single Rental Agent
 - ✅ `search_listings()`
 - ✅ `get_listing_details()`
+- ✅ `get_route_details()`
+- ✅ `compare_candidates()`
 - ✅ Gemini natural-language requirement parsing
 - ✅ ADK Session State for follow-up refinement
-- ✅ RealtyAPI / Apartments.com real listing search
+- ✅ RealtyAPI-backed multi-source listing search
 - ✅ Canonical normalization
 - ✅ Deterministic hard filtering and ranking
-- ✅ Top-3 detail verification
+- ✅ Deterministic commute enrichment / constraint evaluation when requested
+- ✅ Selected-only detail verification with verified-detail reuse
 - ✅ Search/detail merge and hard-filter revalidation
+- ✅ Evidence-backed evaluation for supported soft preferences such as modern, quiet, near transit, and newer
+- ✅ Deterministic side-by-side candidate comparison with unknown / evidence-only semantics
+- ✅ `rental.agent_activity.v1` execution metadata for Agent-side observability
 - ✅ Source-backed final recommendation text
 - ✅ Listing latitude/longitude preserved through the Agent → backend contract
 - ✅ Google Route Matrix summaries for complete commute requirements
@@ -87,18 +92,21 @@ Next.js Frontend
 ## In Progress / Next Product Work
 
 - 🔄 Improve frontend rental-result UX beyond the basic listing cards
+- 🔄 Expose Agent activity metadata through a backend/frontend progress transport
+- 🔄 Connect comparison intelligence into the final web UX
 - 🔄 Run a live Google Routes smoke test with a restricted Maps key
 - 🔄 Present structured commute/map evidence in the product frontend
-- 🔄 Comparison and shortlist workflows remain later product work
+- 🔄 Persistent shortlist workflow remains later product work
 - 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 
 ## Latest Verified Evidence
 
-As of the current integration work:
+As of the current Agent decision-intelligence / observability and Firebase-auth integration work:
 
-- ✅ Python / Backend / Agent tests: 112 passed, including Firebase auth, commute integration, and cross-user isolation
+- ✅ Full Python / Backend / Agent suite: 145 passed, including Firebase auth, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
@@ -120,13 +128,11 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 
 - Geography is currently focused on configured Silicon Valley cities.
 - Some provider fields are unavailable for some listings and must remain unknown.
-- Soft preferences such as quiet / safe / modern do not yet have dedicated enrichment evidence.
-- Commute is computed only when destination, limit, travel mode, coordinates,
-  and a working Routes API key are available; otherwise it remains explicitly
-  unknown or unavailable and must not be guessed by Gemini.
-- Natural-language destination resolution has not yet been validated with a
-  live key; Places API was intentionally not added by the Maps boundary PR.
-- Persistent shortlist / comparison workflows are not complete.
+- Supported soft preferences rely on explicit listing evidence; safety remains unsupported unless a trustworthy evidence source is added.
+- Commute is computed only when destination, limit, travel mode, coordinates, and route evidence are available; otherwise it remains explicitly unknown or unavailable and must not be guessed by Gemini.
+- Natural-language destination resolution has not yet been validated with a live key; Places API was intentionally not added by the Maps boundary PR.
+- Deterministic comparison works from the current ADK session; a persistent shortlist / comparison workflow is not complete.
+- Agent execution metadata exists, but a live backend/frontend progress transport is not implemented yet.
 - Conversation ownership and ADK sessions are still process memory; Firestore persistence is not complete.
 - Background monitoring and landlord outreach are outside the current MVP.
 
