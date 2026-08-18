@@ -16,11 +16,6 @@ from urllib.request import urlopen
 
 GEMINI_KEY_URL = "https://aistudio.google.com/app/apikey"
 REALTYAPI_KEY_URL = "https://www.realtyapi.io/"
-DEFAULT_MODELS = (
-    "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.6-flash,"
-    "gemini-3.5-flash,gemini-2.5-flash"
-)
-DEFAULT_SEARCH_MODEL = "gemini-3.7-flash"
 DEFAULT_FRONTEND_PORT = 3000
 DEFAULT_BACKEND_PORT = 8000
 DEFAULT_AGENT_PORT = 8765
@@ -173,38 +168,42 @@ def init_command() -> int:
 
     env_path = root / ".env"
     existing = _read_env(env_path)
+    use_vertex_ai = existing.get("GOOGLE_GENAI_USE_VERTEXAI", "FALSE").strip().upper() == "TRUE"
 
     print("\n[3/5] API keys")
     print(f"Gemini API key: {GEMINI_KEY_URL}")
     print(f"RealtyAPI key:   {REALTYAPI_KEY_URL}")
     print("Create the keys in those pages, then paste them below.")
 
-    google_key = _read_secret(
-        "Google / Gemini API key",
-        existing.get("GOOGLE_API_KEY") or existing.get("GEMINI_API_KEY"),
-    )
+    if use_vertex_ai:
+        google_key = existing.get("GOOGLE_API_KEY", "")
+    else:
+        google_key = _read_secret(
+            "Google / Gemini API key",
+            existing.get("GOOGLE_API_KEY") or existing.get("GEMINI_API_KEY"),
+        )
     realty_key = _read_secret(
         "RealtyAPI key",
         existing.get("REALTYAPI_API_KEY"),
     )
-    models = existing.get("GEMINI_MODELS") or DEFAULT_MODELS
-    search_model = existing.get("GEMINI_SEARCH_MODEL") or DEFAULT_SEARCH_MODEL
+
+    env_values = dict(existing)
+    env_values.pop("GEMINI_SEARCH_MODEL", None)
+    env_values.pop("GEMINI_MODELS", None)
+    env_values["GOOGLE_API_KEY"] = google_key
+    if use_vertex_ai:
+        env_values.setdefault("GEMINI_API_KEY", "")
+        env_values["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
+    else:
+        env_values["GEMINI_API_KEY"] = ""
+        env_values["GOOGLE_GENAI_USE_VERTEXAI"] = "FALSE"
+    env_values["LISTING_PROVIDER"] = "realtyapi"
+    env_values["REALTYAPI_API_KEY"] = realty_key
+    env_values["AGENT_MODE"] = "adk"
+    env_values["FRONTEND_ORIGIN"] = f"http://localhost:{DEFAULT_FRONTEND_PORT}"
 
     env_path.write_text(
-        "\n".join(
-            [
-                f"GOOGLE_API_KEY={google_key}",
-                "GEMINI_API_KEY=",
-                "GOOGLE_GENAI_USE_VERTEXAI=FALSE",
-                f"GEMINI_SEARCH_MODEL={search_model}",
-                f"GEMINI_MODELS={models}",
-                "LISTING_PROVIDER=realtyapi",
-                f"REALTYAPI_API_KEY={realty_key}",
-                "AGENT_MODE=adk",
-                f"FRONTEND_ORIGIN=http://localhost:{DEFAULT_FRONTEND_PORT}",
-                "",
-            ]
-        ),
+        "\n".join(f"{key}={value}" for key, value in env_values.items()) + "\n",
         encoding="utf-8",
     )
 
