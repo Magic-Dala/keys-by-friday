@@ -112,7 +112,7 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence / observability and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 155 passed, including Firebase auth, Firestore persistence, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 156 passed, including Firebase auth, Firestore adapter persistence, commute integration, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`

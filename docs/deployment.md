@@ -180,6 +180,34 @@ The `Cloud Datastore User` role is Firestore's application read/write role. It
 allows the backend service account to store conversation metadata and each
 verified user's shortlist without granting index-administration access.
 
+## Deploy and verify Firestore client rules
+
+The committed `firestore.rules` file denies every direct browser/mobile read and
+write. Deploy it explicitly before the Cloud Run revision so the Firebase
+project enforces the same boundary as the repository:
+
+```bash
+npm install --global firebase-tools
+firebase login
+firebase deploy --only firestore:rules --project "$KBF_PROJECT_ID"
+```
+
+The deploy must finish with a successful Firestore Rules release. Then open
+**Firebase Console → Firestore Database → Rules** for `KBF_PROJECT_ID` and
+confirm the published rule contains:
+
+```text
+match /{document=**} {
+  allow read, write: if false;
+}
+```
+
+Use the Rules Playground on that page with an unauthenticated `get` request to
+`/users/rules-verification`; the expected result is **Denied**. This verifies
+the deployed client boundary, not merely the checked-in file. The Python Admin
+SDK still reaches Firestore through the Cloud Run service account and IAM, so
+this deny-all client rule does not block FastAPI.
+
 ## Store external API keys in Secret Manager
 
 Read each key without showing it in the Terminal, create the secret, and clear
@@ -241,7 +269,7 @@ gcloud run deploy "$KBF_SERVICE" \
   --min-instances 0 \
   --max-instances 1 \
   --timeout 180 \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
   --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1'
 ```
 
@@ -270,6 +298,12 @@ gcloud run services remove-iam-policy-binding "$KBF_SERVICE" \
 This command bills Gemini usage to Vertex AI in `KBF_PROJECT_ID`. It does not
 use Google AI Studio or a Gemini API key. Routes usage is billed to the same
 project through the separate server-side Maps key.
+
+The deployment intentionally does not set `GEMINI_SEARCH_MODEL` or
+`GEMINI_MODELS`. The Rental Agent owns model selection and fallback policy.
+When coordinating with the Agent-owned routing work, preserve the Firestore
+variables in this command: `PERSISTENCE_MODE`, `FIRESTORE_PROJECT_ID`, and
+`FIRESTORE_DATABASE_ID`.
 
 `GOOGLE_MAPS_API_KEY` is optional to the ordinary rental-search flow, but it is
 required for live commute summaries and selected-route geometry. Restrict this
