@@ -14,6 +14,7 @@ Next.js Frontend
 → POST /api/chat
 → FastAPI Backend
 → Verified Firebase uid
+→ Firestore repositories for conversation metadata and shortlists
 → AgentService
 → Google ADK Rental Agent
 → RealtyAPI-backed rental providers + Google Routes evidence when configured
@@ -88,6 +89,12 @@ Next.js Frontend
 - ✅ Conversation ownership rejects cross-user reuse with HTTP 403
 - ✅ Authorization header enabled in the backend CORS policy
 - ✅ Authentication configuration included in readiness checks
+- ✅ Backend Firestore client factory and repository interfaces
+- ✅ Durable conversation ownership and normalized result metadata
+- ✅ Backend-owned shortlist save, list, and remove APIs
+- ✅ Shortlist snapshots preserve structured coordinate and commute evidence
+- ✅ Fake in-memory repositories cover persistence without cloud quota in CI
+- ✅ Firestore client rules deny direct browser access
 
 ## In Progress / Next Product Work
 
@@ -96,7 +103,7 @@ Next.js Frontend
 - 🔄 Connect comparison intelligence into the final web UX
 - 🔄 Run a live Google Routes smoke test with a restricted Maps key
 - 🔄 Present structured commute/map evidence in the product frontend
-- 🔄 Persistent shortlist workflow remains later product work
+- 🔄 Comparison UX exists; richer shortlist notes and cross-session ADK restoration remain later work
 - 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
@@ -105,7 +112,7 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence / observability and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 145 passed, including Firebase auth, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 156 passed, including Firebase auth, Firestore adapter persistence, commute integration, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
@@ -131,9 +138,9 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 - Supported soft preferences rely on explicit listing evidence; safety remains unsupported unless a trustworthy evidence source is added.
 - Commute is computed only when destination, limit, travel mode, coordinates, and route evidence are available; otherwise it remains explicitly unknown or unavailable and must not be guessed by Gemini.
 - Natural-language destination resolution has not yet been validated with a live key; Places API was intentionally not added by the Maps boundary PR.
-- Deterministic comparison works from the current ADK session; a persistent shortlist / comparison workflow is not complete.
+- Deterministic comparison works from the current Agent results, while shortlist snapshots persist through Firestore.
 - Agent execution metadata exists, but a live backend/frontend progress transport is not implemented yet.
-- Conversation ownership and ADK sessions are still process memory; Firestore persistence is not complete.
+- Shortlists and conversation ownership/metadata persist in Firestore, but the full ADK session and transcript remain in process memory.
 - Background monitoring and landlord outreach are outside the current MVP.
 
 ## Update Rule

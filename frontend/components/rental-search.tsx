@@ -17,8 +17,17 @@ import { ListingCard } from "@/components/listing-card";
 import { RentalMap } from "@/components/rental-map";
 import { SearchComposer } from "@/components/search-composer";
 import { useRouteSelection } from "@/hooks/use-route-selection";
-import { sendChat } from "@/lib/api";
-import type { AgentMode, CommuteEvaluation, Listing } from "@/types/search";
+import {
+  getShortlist,
+  removeShortlistItem,
+  saveShortlistItem,
+  sendChat,
+} from "@/lib/api";
+import type {
+  AgentMode,
+  CommuteEvaluation,
+  Listing,
+} from "@/types/search";
 
 const examplePrompts = [
   "2 bed under $4,000 in Mountain View with parking",
@@ -26,47 +35,10 @@ const examplePrompts = [
   "Modern 1 bed in Sunnyvale, flexible on move-in",
 ];
 
-const shortlistStorageKey = "keys-by-friday-shortlist";
-
 interface Turn {
   id: string;
   role: "user" | "agent";
   text: string;
-}
-
-interface StoredShortlist {
-  version: 1;
-  listings: Listing[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isOptionalType(value: unknown, type: "string" | "number") {
-  return value === undefined || typeof value === type;
-}
-
-function isListing(value: unknown): value is Listing {
-  if (!isRecord(value) || typeof value.id !== "string") return false;
-  return (
-    isOptionalType(value.title, "string") &&
-    isOptionalType(value.address, "string") &&
-    isOptionalType(value.price, "number") &&
-    isOptionalType(value.bedrooms, "number") &&
-    isOptionalType(value.bathrooms, "number") &&
-    isOptionalType(value.url, "string") &&
-    isOptionalType(value.score, "number") &&
-    isOptionalType(value.reason, "string")
-  );
-}
-
-function parseShortlist(value: string): Listing[] {
-  const parsed: unknown = JSON.parse(value);
-  if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.listings)) {
-    return [];
-  }
-  return parsed.listings.filter(isListing).slice(0, 24);
 }
 
 function turnId(role: Turn["role"]) {
@@ -107,7 +79,6 @@ export function RentalSearch() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [loading, setLoading] = useState(false);
-  const [storageReady, setStorageReady] = useState(false);
   const requestRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const routeSelection = useRouteSelection(conversationId);
@@ -115,25 +86,17 @@ export function RentalSearch() {
   const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(shortlistStorageKey);
-      if (stored) setSavedListings(parseShortlist(stored));
-    } catch {
-      // A blocked or malformed local store should never block rental search.
-    } finally {
-      setStorageReady(true);
-    }
+    const controller = new AbortController();
+    getShortlist({ signal: controller.signal })
+      .then((response) => {
+        setSavedListings(response.items.map((item) => item.listing));
+      })
+      .catch((caught) => {
+        if (caught instanceof Error && caught.name === "AbortError") return;
+        setNotice("Your saved shortlist could not be loaded yet.");
+      });
+    return () => controller.abort();
   }, []);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    try {
-      const stored: StoredShortlist = { version: 1, listings: savedListings };
-      window.localStorage.setItem(shortlistStorageKey, JSON.stringify(stored));
-    } catch {
-      // Shortlist persistence is an enhancement; keep the in-memory state working.
-    }
-  }, [savedListings, storageReady]);
 
   useEffect(() => () => requestRef.current?.abort(), []);
 
@@ -210,14 +173,38 @@ export function RentalSearch() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
-  function toggleSaved(listing: Listing) {
+  async function toggleSaved(listing: Listing) {
     const isSaved = savedListings.some((item) => item.id === listing.id);
-    setSavedListings((current) =>
-      isSaved
-        ? current.filter((item) => item.id !== listing.id)
-        : [listing, ...current].slice(0, 24),
-    );
-    setNotice(isSaved ? "Removed from your shortlist." : "Saved to your shortlist.");
+    if (isSaved) {
+      const previous = savedListings;
+      setSavedListings((current) => current.filter((item) => item.id !== listing.id));
+      try {
+        await removeShortlistItem(listing.id);
+        setNotice("Removed from your shortlist.");
+      } catch (caught) {
+        setSavedListings(previous);
+        setNotice(caught instanceof Error ? caught.message : "The home could not be removed.");
+      }
+      return;
+    }
+
+    if (!conversationId) {
+      setNotice("Start a rental search before saving a home.");
+      return;
+    }
+
+    setSavedListings((current) => [listing, ...current].slice(0, 24));
+    try {
+      const saved = await saveShortlistItem(listing.id, conversationId);
+      setSavedListings((current) => [
+        saved.listing,
+        ...current.filter((item) => item.id !== saved.listing.id),
+      ].slice(0, 24));
+      setNotice("Saved to your shortlist.");
+    } catch (caught) {
+      setSavedListings((current) => current.filter((item) => item.id !== listing.id));
+      setNotice(caught instanceof Error ? caught.message : "The home could not be saved.");
+    }
   }
 
   function toggleComparison(listing: Listing) {
@@ -447,7 +434,7 @@ export function RentalSearch() {
                 ))}
               </ul>
             ) : (
-              <p>Save promising homes here. Your shortlist stays on this device.</p>
+              <p>Save promising homes here. Your shortlist is stored by the backend.</p>
             )}
           </section>
 

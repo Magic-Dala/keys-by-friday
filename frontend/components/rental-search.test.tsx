@@ -3,12 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { RentalSearch } from "@/components/rental-search";
-import { getSelectedRoute, sendChat } from "@/lib/api";
+import { getSelectedRoute, getShortlist, sendChat } from "@/lib/api";
 import type { SearchResponse } from "@/types/search";
 
 const { loadGoogleMapsMock } = vi.hoisted(() => ({ loadGoogleMapsMock: vi.fn() }));
 
-vi.mock("@/lib/api", () => ({ getSelectedRoute: vi.fn(), sendChat: vi.fn() }));
+vi.mock("@/lib/api", () => ({
+  getSelectedRoute: vi.fn(),
+  getShortlist: vi.fn(),
+  removeShortlistItem: vi.fn(),
+  saveShortlistItem: vi.fn(),
+  sendChat: vi.fn(),
+}));
 vi.mock("@/lib/google-maps", () => ({ loadGoogleMaps: loadGoogleMapsMock }));
 
 const mapInstances: TestMap[] = [];
@@ -76,6 +82,8 @@ const searchResponse: SearchResponse = {
 beforeEach(() => {
   window.localStorage.clear();
   vi.mocked(getSelectedRoute).mockReset();
+  vi.mocked(getShortlist).mockReset();
+  vi.mocked(getShortlist).mockResolvedValue({ items: [] });
   vi.mocked(sendChat).mockReset();
   loadGoogleMapsMock.mockReset();
   mapInstances.length = 0;

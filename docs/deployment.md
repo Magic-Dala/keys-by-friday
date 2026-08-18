@@ -24,6 +24,7 @@ From the repository root, test without external API keys:
 APP_ENV=local \
 AGENT_MODE=stub \
 AUTH_MODE=disabled \
+PERSISTENCE_MODE=memory \
 LISTING_PROVIDER=mock \
 uv run --extra backend uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -88,6 +89,7 @@ docker run --rm \
   -e APP_ENV=local \
   -e AGENT_MODE=stub \
   -e AUTH_MODE=disabled \
+  -e PERSISTENCE_MODE=memory \
   -e LISTING_PROVIDER=mock \
   keys-by-friday-backend:local
 ```
@@ -149,6 +151,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
+  firestore.googleapis.com \
   aiplatform.googleapis.com \
   routes.googleapis.com
 ```
@@ -162,12 +165,48 @@ gcloud iam service-accounts create kbf-backend \
 gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
   --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
   --role='roles/aiplatform.user'
+
+gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
+  --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
+  --role='roles/datastore.user'
 ```
 
 The `Vertex AI User` role lets this backend identity call Gemini through Vertex
 AI. Cloud Run automatically supplies credentials for its attached service
 account, so do not create a Gemini API key and do not set
 `GOOGLE_APPLICATION_CREDENTIALS` in Cloud Run.
+
+The `Cloud Datastore User` role is Firestore's application read/write role. It
+allows the backend service account to store conversation metadata and each
+verified user's shortlist without granting index-administration access.
+
+## Deploy and verify Firestore client rules
+
+The committed `firestore.rules` file denies every direct browser/mobile read and
+write. Deploy it explicitly before the Cloud Run revision so the Firebase
+project enforces the same boundary as the repository:
+
+```bash
+npm install --global firebase-tools
+firebase login
+firebase deploy --only firestore:rules --project "$KBF_PROJECT_ID"
+```
+
+The deploy must finish with a successful Firestore Rules release. Then open
+**Firebase Console → Firestore Database → Rules** for `KBF_PROJECT_ID` and
+confirm the published rule contains:
+
+```text
+match /{document=**} {
+  allow read, write: if false;
+}
+```
+
+Use the Rules Playground on that page with an unauthenticated `get` request to
+`/users/rules-verification`; the expected result is **Denied**. This verifies
+the deployed client boundary, not merely the checked-in file. The Python Admin
+SDK still reaches Firestore through the Cloud Run service account and IAM, so
+this deny-all client rule does not block FastAPI.
 
 ## Store external API keys in Secret Manager
 
@@ -211,7 +250,7 @@ This gives the backend two different identity checks during private testing:
 
 ```text
 Cloud Run IAM token  → may this developer/service invoke the private service?
-Firebase ID token    → which product user owns this conversation?
+Firebase ID token    → which product user owns this conversation/shortlist?
 ```
 
 From the repository root:
@@ -230,7 +269,7 @@ gcloud run deploy "$KBF_SERVICE" \
   --min-instances 0 \
   --max-instances 1 \
   --timeout 180 \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
   --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1'
 ```
 
@@ -260,6 +299,12 @@ This command bills Gemini usage to Vertex AI in `KBF_PROJECT_ID`. It does not
 use Google AI Studio or a Gemini API key. Routes usage is billed to the same
 project through the separate server-side Maps key.
 
+The deployment intentionally does not set `GEMINI_SEARCH_MODEL` or
+`GEMINI_MODELS`. The Rental Agent owns model selection and fallback policy.
+When coordinating with the Agent-owned routing work, preserve the Firestore
+variables in this command: `PERSISTENCE_MODE`, `FIRESTORE_PROJECT_ID`, and
+`FIRESTORE_DATABASE_ID`.
+
 `GOOGLE_MAPS_API_KEY` is optional to the ordinary rental-search flow, but it is
 required for live commute summaries and selected-route geometry. Restrict this
 key to the Google Routes API in Google Cloud Console. See `docs/maps.md` for the
@@ -270,10 +315,11 @@ the frontend sends Firebase ID tokens, then add server-side distributed limits
 for each uid plus an aggregate project-level cap. Provider quotas and billing
 alerts are additional safeguards; a billing alert alone does not stop requests.
 
-`max-instances=1` reduces the chance that an in-memory conversation is split
-across instances. It does not make sessions durable: a restart or scale-to-zero
-event still removes current ADK session state. Persistent sessions are a later
-milestone.
+Firestore now keeps conversation ownership/metadata and shortlists across
+instances. `max-instances=1` still reduces the chance that the current in-memory
+ADK session is split across instances. A restart or scale-to-zero event can
+still remove full Agent conversation state; metadata persistence is not the same
+as ADK session persistence.
 
 After deployment, configure an HTTP startup/readiness probe for `/ready` and an
 HTTP liveness probe for `/health` in the Cloud Run console under **Containers,
@@ -297,8 +343,8 @@ First confirm that an unauthenticated request is rejected by Cloud Run:
 curl -i "$KBF_BACKEND_URL/health"
 ```
 
-The desired result is an HTTP `401` or `403` generated by Cloud Run. The request
-should not reach FastAPI.
+The desired result is an HTTP `401` or `403` generated by Cloud Run because the
+request has no Cloud Run identity token. It should not reach FastAPI.
 
 Create a short-lived Cloud Run identity token for the developer account that has
 the Invoker role:

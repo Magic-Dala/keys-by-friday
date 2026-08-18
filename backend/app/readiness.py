@@ -22,10 +22,21 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
         auth_ready = bool(settings.firebase_project_id)
         checks["auth"] = "configured" if auth_ready else "not_configured"
 
+    if settings.persistence_mode == "memory":
+        persistence_ready = not is_production
+        checks["persistence"] = (
+            "memory" if persistence_ready else "memory_not_allowed"
+        )
+    else:
+        persistence_ready = bool(settings.firestore_project_id)
+        checks["persistence"] = (
+            "configured" if persistence_ready else "not_configured"
+        )
+
     if settings.agent_mode == "stub" and not is_production:
         checks["agent"] = "stub"
         checks["provider"] = "not_required"
-        return auth_ready, checks
+        return auth_ready and persistence_ready, checks
 
     if settings.agent_mode == "stub":
         agent_ready = False
@@ -57,4 +68,4 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
         provider_ready = False
         checks["provider"] = "unsupported"
 
-    return auth_ready and agent_ready and provider_ready, checks
+    return auth_ready and persistence_ready and agent_ready and provider_ready, checks
