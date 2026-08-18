@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
+from backend.app.auth import AuthenticatedUser, get_current_user
+from backend.app.config import Settings
+from backend.app.main import create_app
 from backend.app.services.agent_service import (
     AgentService,
     AgentServiceError,
@@ -11,38 +13,53 @@ from backend.app.services.agent_service import (
 )
 
 
+def contract_test_app():
+    """Create an API app whose behavior never depends on the developer's .env."""
+
+    application = create_app(
+        Settings(
+            agent_mode="stub",
+            auth_mode="firebase",
+            app_environment="test",
+            firebase_project_id="test-project",
+        )
+    )
+    service = AgentService(mode="stub", timeout_seconds=120)
+    application.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="contract-test-user", sign_in_provider="test"
+    )
+    application.dependency_overrides[get_agent_service] = lambda: service
+    return application
+
+
 def test_health() -> None:
-    assert TestClient(app).get("/health").json() == {"status": "ok"}
+    assert TestClient(contract_test_app()).get("/health").json() == {"status": "ok"}
 
 
 def test_chat_contract_with_stub() -> None:
-    app.dependency_overrides[get_agent_service] = lambda: AgentService(mode="stub")
-    try:
-        response = TestClient(app).post("/api/chat", json={"message": "2B2B in Mountain View"})
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["conversationId"]
-        assert payload["mode"] == "stub"
-        assert payload["listings"] == []
-    finally:
-        app.dependency_overrides.clear()
+    response = TestClient(contract_test_app()).post(
+        "/api/chat", json={"message": "2B2B in Mountain View"}
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["conversationId"]
+    assert payload["mode"] == "stub"
+    assert payload["listings"] == []
 
 
 def test_chat_rejects_blank_message() -> None:
-    response = TestClient(app).post("/api/chat", json={"message": "   "})
+    response = TestClient(contract_test_app()).post(
+        "/api/chat", json={"message": "   "}
+    )
     assert response.status_code == 422
 
 
 def test_chat_normalizes_request_whitespace() -> None:
-    app.dependency_overrides[get_agent_service] = lambda: AgentService(mode="stub")
-    try:
-        response = TestClient(app).post(
-            "/api/chat", json={"message": "  2B2B in Mountain View  "}
-        )
-        assert response.status_code == 200
-        assert response.json()["message"].endswith("2B2B in Mountain View")
-    finally:
-        app.dependency_overrides.clear()
+    response = TestClient(contract_test_app()).post(
+        "/api/chat", json={"message": "  2B2B in Mountain View  "}
+    )
+    assert response.status_code == 200
+    assert response.json()["message"].endswith("2B2B in Mountain View")
 
 
 def test_normalize_adk_tool_results_for_web_contract() -> None:
@@ -257,16 +274,25 @@ def test_normalize_excludes_detail_verified_hard_filter_failure() -> None:
 
 def test_chat_maps_agent_failure_to_stable_gateway_error() -> None:
     class FailingAgentService:
-        async def send_message(self, message: str, conversation_id: str | None = None):
+        async def send_message(
+            self,
+            message: str,
+            conversation_id: str | None = None,
+            *,
+            user_id: str,
+        ):
             raise AgentServiceError("provider details must stay private")
 
-    app.dependency_overrides[get_agent_service] = lambda: FailingAgentService()
+    application = contract_test_app()
+    application.dependency_overrides[get_agent_service] = lambda: FailingAgentService()
     try:
-        response = TestClient(app).post("/api/chat", json={"message": "Find a rental"})
+        response = TestClient(application).post(
+            "/api/chat", json={"message": "Find a rental"}
+        )
         assert response.status_code == 502
         assert response.json() == {"detail": "Rental agent is temporarily unavailable."}
     finally:
-        app.dependency_overrides.clear()
+        application.dependency_overrides.clear()
 
 
 def test_selected_route_http_contract() -> None:
@@ -278,11 +304,13 @@ def test_selected_route_http_contract() -> None:
             *,
             destination: str = "",
             mode: str = "",
+            user_id: str,
         ):
             assert listing_id == "listing-1"
             assert conversation_id == "conversation-1"
             assert destination == "Google Mountain View"
             assert mode == "DRIVE"
+            assert user_id == "contract-test-user"
             return _route_from_tool_payload(
                 {
                     "listing_id": listing_id,
@@ -296,9 +324,10 @@ def test_selected_route_http_contract() -> None:
                 }
             )
 
-    app.dependency_overrides[get_agent_service] = lambda: FakeRouteService()
+    application = contract_test_app()
+    application.dependency_overrides[get_agent_service] = lambda: FakeRouteService()
     try:
-        response = TestClient(app).post(
+        response = TestClient(application).post(
             "/api/route",
             json={
                 "listingId": "listing-1",
@@ -320,4 +349,4 @@ def test_selected_route_http_contract() -> None:
             "encodedPolyline": "abc123",
         }
     finally:
-        app.dependency_overrides.clear()
+        application.dependency_overrides.clear()

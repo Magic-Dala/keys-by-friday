@@ -23,6 +23,7 @@ From the repository root, test without external API keys:
 ```bash
 APP_ENV=local \
 AGENT_MODE=stub \
+AUTH_MODE=disabled \
 LISTING_PROVIDER=mock \
 uv run --extra backend uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -48,7 +49,24 @@ Expected results:
 - Responses include an `X-Request-ID` header.
 - The backend Terminal prints one-line JSON request logs.
 
-To test the real Agent, configure the root `.env` file and use:
+To test the real Agent through Vertex AI, authenticate your Mac once:
+
+```bash
+gcloud auth application-default login
+```
+
+Then configure the ignored root `.env` file:
+
+```dotenv
+GOOGLE_GENAI_USE_VERTEXAI=TRUE
+GOOGLE_CLOUD_PROJECT=your-google-cloud-project-id
+GOOGLE_CLOUD_LOCATION=global
+GOOGLE_API_KEY=
+GEMINI_API_KEY=
+```
+
+Vertex AI uses your Google Cloud login locally, so it does not need a Gemini API
+key. Keep the existing RealtyAPI and Firebase settings in `.env`, then run:
 
 ```bash
 uv run --extra backend uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
@@ -69,6 +87,7 @@ docker run --rm \
   -p 8080:8080 \
   -e APP_ENV=local \
   -e AGENT_MODE=stub \
+  -e AUTH_MODE=disabled \
   -e LISTING_PROVIDER=mock \
   keys-by-friday-backend:local
 ```
@@ -129,7 +148,9 @@ gcloud services enable \
   run.googleapis.com \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
-  secretmanager.googleapis.com
+  secretmanager.googleapis.com \
+  aiplatform.googleapis.com \
+  routes.googleapis.com
 ```
 
 Create a dedicated identity for the backend:
@@ -137,44 +158,61 @@ Create a dedicated identity for the backend:
 ```bash
 gcloud iam service-accounts create kbf-backend \
   --display-name='Keys by Friday backend'
+
+gcloud projects add-iam-policy-binding "$KBF_PROJECT_ID" \
+  --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
+  --role='roles/aiplatform.user'
 ```
 
-## Store API keys in Secret Manager
+The `Vertex AI User` role lets this backend identity call Gemini through Vertex
+AI. Cloud Run automatically supplies credentials for its attached service
+account, so do not create a Gemini API key and do not set
+`GOOGLE_APPLICATION_CREDENTIALS` in Cloud Run.
+
+## Store external API keys in Secret Manager
 
 Read each key without showing it in the Terminal, create the secret, and clear
 the temporary shell variable:
 
 ```bash
-read -s -p 'Google API key: ' KBF_SECRET_VALUE; echo
-printf '%s' "$KBF_SECRET_VALUE" | \
-  gcloud secrets create kbf-google-api-key --data-file=-
-unset KBF_SECRET_VALUE
-
 read -s -p 'RealtyAPI key: ' KBF_SECRET_VALUE; echo
 printf '%s' "$KBF_SECRET_VALUE" | \
   gcloud secrets create kbf-realtyapi-key --data-file=-
+unset KBF_SECRET_VALUE
+
+read -s -p 'Google Maps Routes API key: ' KBF_SECRET_VALUE; echo
+printf '%s' "$KBF_SECRET_VALUE" | \
+  gcloud secrets create kbf-google-maps-api-key --data-file=-
 unset KBF_SECRET_VALUE
 ```
 
 Allow only the backend service account to read those secrets:
 
 ```bash
-gcloud secrets add-iam-policy-binding kbf-google-api-key \
+gcloud secrets add-iam-policy-binding kbf-realtyapi-key \
   --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
   --role='roles/secretmanager.secretAccessor'
 
-gcloud secrets add-iam-policy-binding kbf-realtyapi-key \
+gcloud secrets add-iam-policy-binding kbf-google-maps-api-key \
   --member="serviceAccount:${KBF_SERVICE_ACCOUNT}" \
   --role='roles/secretmanager.secretAccessor'
 ```
 
 ## Deploy to Cloud Run
 
-Milestone 1 keeps the Cloud Run service private. Cloud Run IAM rejects anonymous
-requests before they can reach `/api/chat`, preventing anonymous users from
-consuming paid Gemini or RealtyAPI quota. Do not change this to
-`--allow-unauthenticated` until application-level authentication and abuse
-controls are merged and tested.
+Keep the Cloud Run service private for this milestone. Firebase verifies who owns
+a conversation, but anonymous Firebase users are inexpensive to create and do
+not prevent an attacker from repeatedly consuming Gemini, RealtyAPI, or Routes
+quota. Cloud Run IAM therefore remains the outer deployment boundary until the
+public path has distributed rate limiting, aggregate cost caps, and abuse
+monitoring.
+
+This gives the backend two different identity checks during private testing:
+
+```text
+Cloud Run IAM token  → may this developer/service invoke the private service?
+Firebase ID token    → which product user owns this conversation?
+```
 
 From the repository root:
 
@@ -192,11 +230,11 @@ gcloud run deploy "$KBF_SERVICE" \
   --min-instances 0 \
   --max-instances 1 \
   --timeout 180 \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=FALSE,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
-  --set-secrets 'GOOGLE_API_KEY=kbf-google-api-key:1,REALTYAPI_API_KEY=kbf-realtyapi-key:1'
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODELS=gemini-3.5-flash-lite,AGENT_TIMEOUT_SECONDS=120,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1'
 ```
 
-Grant only your current Google account permission to invoke this private demo
+Grant only your current Google account permission to invoke the private demo
 service:
 
 ```bash
@@ -207,8 +245,7 @@ gcloud run services add-iam-policy-binding "$KBF_SERVICE" \
   --role='roles/run.invoker'
 ```
 
-If an earlier revision was deployed publicly, explicitly remove its public
-invoker binding:
+If an earlier revision was public, remove any legacy `allUsers` Invoker binding:
 
 ```bash
 gcloud run services remove-iam-policy-binding "$KBF_SERVICE" \
@@ -219,9 +256,19 @@ gcloud run services remove-iam-policy-binding "$KBF_SERVICE" \
   --all
 ```
 
-This IAM boundary authenticates developers and service accounts, not Firebase
-browser users. Until the Firebase authentication milestone is merged, use the
-authenticated command-line smoke test below and keep the hosted API private.
+This command bills Gemini usage to Vertex AI in `KBF_PROJECT_ID`. It does not
+use Google AI Studio or a Gemini API key. Routes usage is billed to the same
+project through the separate server-side Maps key.
+
+`GOOGLE_MAPS_API_KEY` is optional to the ordinary rental-search flow, but it is
+required for live commute summaries and selected-route geometry. Restrict this
+key to the Google Routes API in Google Cloud Console. See `docs/maps.md` for the
+local and deployed Maps checks.
+
+Before making a later service public, confirm that Firebase is enabled and that
+the frontend sends Firebase ID tokens, then add server-side distributed limits
+for each uid plus an aggregate project-level cap. Provider quotas and billing
+alerts are additional safeguards; a billing alert alone does not stop requests.
 
 `max-instances=1` reduces the chance that an in-memory conversation is split
 across instances. It does not make sessions durable: a restart or scale-to-zero
@@ -244,51 +291,70 @@ export KBF_BACKEND_URL="$(gcloud run services describe "$KBF_SERVICE" \
 echo "$KBF_BACKEND_URL"
 ```
 
-Create a short-lived identity token for the Google account that has the Cloud
-Run Invoker role:
+First confirm that an unauthenticated request is rejected by Cloud Run:
 
 ```bash
-export KBF_ID_TOKEN="$(gcloud auth print-identity-token \
-  --audiences="$KBF_BACKEND_URL")"
+curl -i "$KBF_BACKEND_URL/health"
 ```
 
-Test health and readiness:
+The desired result is an HTTP `401` or `403` generated by Cloud Run. The request
+should not reach FastAPI.
+
+Create a short-lived Cloud Run identity token for the developer account that has
+the Invoker role:
+
+```bash
+export KBF_CLOUD_RUN_TOKEN="$(gcloud auth print-identity-token)"
+```
+
+This developer token is only for a short manual smoke test. Production
+service-to-service callers should use a service-account ID token whose audience
+is the Cloud Run service URL.
+
+Now the platform should allow health and readiness requests through to FastAPI:
 
 ```bash
 curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
+  -H "Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
   "$KBF_BACKEND_URL/health"
+
 curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
+  -H "Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
   "$KBF_BACKEND_URL/ready"
 ```
 
-Test a real rental search:
+Confirm that FastAPI still rejects a chat request without a Firebase token. Use
+`X-Serverless-Authorization` for the Cloud Run token so the normal
+`Authorization` header remains available to Firebase authentication:
 
 ```bash
 curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
+  -H "X-Serverless-Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -H 'X-Request-ID: cloud-smoke-test' \
   -d '{"message":"2B2B under $4,000 in Mountain View"}' \
   "$KBF_BACKEND_URL/api/chat"
 ```
 
-Copy the returned `conversationId` into a follow-up request:
+The desired response is FastAPI HTTP `401` with `A valid sign-in token is
+required.` A fully authenticated command-line request needs both headers:
 
-```bash
-curl -i \
-  -H "Authorization: Bearer ${KBF_ID_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"I also need parking","conversationId":"PASTE_ID_HERE"}' \
-  "$KBF_BACKEND_URL/api/chat"
+```text
+X-Serverless-Authorization: Bearer <Cloud Run identity token>
+Authorization: Bearer <Firebase ID token>
 ```
 
-Clear the short-lived token when testing is complete:
+Do not paste either token into source files, documentation, screenshots, or chat.
+Clear the short-lived shell value when testing is complete:
 
 ```bash
-unset KBF_ID_TOKEN
+unset KBF_CLOUD_RUN_TOKEN
 ```
+
+The current Next.js browser calls FastAPI directly and cannot mint a Cloud Run
+IAM token. Therefore, keep browser end-to-end testing local for now. A hosted
+browser flow needs an approved public edge such as a server-side frontend proxy
+or load balancer/gateway with abuse controls; Firebase authentication alone is
+not that edge.
 
 View recent application and platform logs:
 

@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 AgentMode = Literal["adk", "stub"]
 AppEnvironment = Literal["local", "test", "production"]
+AuthMode = Literal["disabled", "firebase"]
 
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
@@ -22,6 +23,8 @@ class Settings:
     agent_timeout_seconds: float = 120.0
     log_level: str = "INFO"
     google_cloud_project: str | None = None
+    auth_mode: AuthMode = "disabled"
+    firebase_project_id: str | None = None
 
 
 def _agent_mode(value: str) -> AgentMode:
@@ -36,6 +39,13 @@ def _app_environment(value: str) -> AppEnvironment:
     if normalized not in {"local", "test", "production"}:
         raise ValueError("APP_ENV must be 'local', 'test', or 'production'.")
     return cast(AppEnvironment, normalized)
+
+
+def _auth_mode(value: str) -> AuthMode:
+    normalized = value.strip().lower()
+    if normalized not in {"disabled", "firebase"}:
+        raise ValueError("AUTH_MODE must be 'disabled' or 'firebase'.")
+    return cast(AuthMode, normalized)
 
 
 def _positive_seconds(value: str) -> float:
@@ -62,6 +72,7 @@ def _log_level(value: str) -> str:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     load_dotenv()
+    google_cloud_project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or None
     return Settings(
         agent_mode=_agent_mode(os.getenv("AGENT_MODE", "adk")),
         frontend_origin=os.getenv(
@@ -73,5 +84,10 @@ def get_settings() -> Settings:
             os.getenv("AGENT_TIMEOUT_SECONDS", "120")
         ),
         log_level=_log_level(os.getenv("LOG_LEVEL", "INFO")),
-        google_cloud_project=os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or None,
+        google_cloud_project=google_cloud_project,
+        auth_mode=_auth_mode(os.getenv("AUTH_MODE", "disabled")),
+        firebase_project_id=(
+            os.getenv("FIREBASE_PROJECT_ID", "").strip()
+            or google_cloud_project
+        ),
     )

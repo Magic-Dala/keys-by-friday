@@ -15,10 +15,17 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
     checks = {"api": "ok"}
     is_production = settings.app_environment == "production"
 
+    if settings.auth_mode == "disabled":
+        auth_ready = not is_production
+        checks["auth"] = "disabled" if auth_ready else "not_configured"
+    else:
+        auth_ready = bool(settings.firebase_project_id)
+        checks["auth"] = "configured" if auth_ready else "not_configured"
+
     if settings.agent_mode == "stub" and not is_production:
         checks["agent"] = "stub"
         checks["provider"] = "not_required"
-        return True, checks
+        return auth_ready, checks
 
     if settings.agent_mode == "stub":
         agent_ready = False
@@ -50,4 +57,4 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
         provider_ready = False
         checks["provider"] = "unsupported"
 
-    return agent_ready and provider_ready, checks
+    return auth_ready and agent_ready and provider_ready, checks

@@ -13,9 +13,10 @@ Current end-to-end shape:
 Next.js Frontend
 → POST /api/chat
 → FastAPI Backend
+→ Verified Firebase uid
 → AgentService
 → Google ADK Rental Agent
-→ Rental providers + Maps / Routes evidence
+→ RealtyAPI-backed rental providers + Google Routes evidence when configured
 → Agent response + structured execution metadata
 ```
 
@@ -54,6 +55,13 @@ Next.js Frontend
 - ✅ Deterministic side-by-side candidate comparison with unknown / evidence-only semantics
 - ✅ `rental.agent_activity.v1` execution metadata for Agent-side observability
 - ✅ Source-backed final recommendation text
+- ✅ Listing latitude/longitude preserved through the Agent → backend contract
+- ✅ Google Route Matrix summaries for complete commute requirements
+- ✅ Deterministic hard commute filtering before ranking
+- ✅ Explicit `unknown` / `unavailable` commute states instead of guessed passes
+- ✅ On-demand `POST /api/route` selected-listing geometry contract
+- ✅ Firebase ownership protection on both `/api/chat` and `/api/route`
+- ✅ Ordinary rental search remains available when Maps is not configured
 
 ### Development Foundation
 
@@ -74,23 +82,31 @@ Next.js Frontend
 - ✅ Separate liveness (`/health`) and configuration readiness (`/ready`) checks
 - ✅ Bounded Agent execution time with a stable API failure boundary
 - ✅ Secret Manager-based deployment instructions for macOS
+- ✅ Optional anonymous Firebase sign-in in the Next.js frontend
+- ✅ Firebase Admin ID-token verification in FastAPI
+- ✅ Verified Firebase `uid` replaces the shared `web-user` ADK identity
+- ✅ Conversation ownership rejects cross-user reuse with HTTP 403
+- ✅ Authorization header enabled in the backend CORS policy
+- ✅ Authentication configuration included in readiness checks
 
 ## In Progress / Next Product Work
 
 - 🔄 Improve frontend rental-result UX beyond the basic listing cards
 - 🔄 Expose Agent activity metadata through a backend/frontend progress transport
 - 🔄 Connect comparison intelligence into the final web UX
+- 🔄 Run a live Google Routes smoke test with a restricted Maps key
+- 🔄 Present structured commute/map evidence in the product frontend
 - 🔄 Persistent shortlist workflow remains later product work
+- 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 
 ## Latest Verified Evidence
 
-As of the current Agent decision-intelligence / observability work:
+As of the current Agent decision-intelligence / observability and Firebase-auth integration work:
 
-- ✅ Full Python suite: 112 passed
+- ✅ Full Python / Backend / Agent suite: 145 passed, including Firebase auth, commute integration, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Agent observability contract suite: 14 passed
-- ✅ Python / Backend / Agent tests: 43 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
@@ -103,6 +119,7 @@ As of the current Agent decision-intelligence / observability work:
 - ✅ Real follow-up request reused the same `conversationId` and preserved the ADK session
 - ✅ Empty requests return 422 and Agent-layer failures are mapped to a stable 502 response
 - ✅ Frontend TypeScript typecheck passed after listing-card integration
+- ✅ Firebase frontend changes pass a direct TypeScript typecheck
 - ✅ Removed `/api/search` returns 404; `/api/chat` is the single primary web endpoint
 
 Exact commit hashes and branch names are intentionally not recorded here; Git is the source of truth for those details.
@@ -111,10 +128,12 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 
 - Geography is currently focused on configured Silicon Valley cities.
 - Some provider fields are unavailable for some listings and must remain unknown.
-- Supported soft preferences currently rely on explicit listing evidence; safety remains unsupported unless a trustworthy evidence source is added.
-- Commute is computed only when required inputs and route evidence are available; unavailable or unknown commute data must remain unknown.
-- Comparison works from the current ADK session; a persistent backend shortlist workflow is not complete.
+- Supported soft preferences rely on explicit listing evidence; safety remains unsupported unless a trustworthy evidence source is added.
+- Commute is computed only when destination, limit, travel mode, coordinates, and route evidence are available; otherwise it remains explicitly unknown or unavailable and must not be guessed by Gemini.
+- Natural-language destination resolution has not yet been validated with a live key; Places API was intentionally not added by the Maps boundary PR.
+- Deterministic comparison works from the current ADK session; a persistent shortlist / comparison workflow is not complete.
 - Agent execution metadata exists, but a live backend/frontend progress transport is not implemented yet.
+- Conversation ownership and ADK sessions are still process memory; Firestore persistence is not complete.
 - Background monitoring and landlord outreach are outside the current MVP.
 
 ## Update Rule
