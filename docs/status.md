@@ -68,6 +68,12 @@ Next.js Frontend
 - ✅ npm / Next.js frontend environment
 - ✅ `.env` secrets ignored by Git
 - ✅ Stable-reference documentation structure
+- ✅ Cloud Run-compatible backend container
+- ✅ Backend configuration validation for environment, logging, and Agent timeout
+- ✅ Cloud-friendly structured JSON request logs and request IDs
+- ✅ Separate liveness (`/health`) and configuration readiness (`/ready`) checks
+- ✅ Bounded Agent execution time with a stable API failure boundary
+- ✅ Secret Manager-based deployment instructions for macOS
 
 ## In Progress / Next Product Work
 
@@ -84,6 +90,10 @@ As of the current Agent decision-intelligence / observability work:
 
 - ✅ Full Python suite: 112 passed
 - ✅ Agent observability contract suite: 14 passed
+- ✅ Python / Backend / Agent tests: 43 passed
+- ✅ Backend container built locally with Python 3.12
+- ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
+- ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
 - ✅ Next.js production build passed
 - ✅ TypeScript typecheck passed
 - ✅ Frontend page rendered locally

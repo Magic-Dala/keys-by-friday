@@ -65,6 +65,7 @@ Useful local URLs:
 | Product UI | http://localhost:3000 |
 | API docs | http://localhost:8000/docs |
 | Backend health | http://localhost:8000/health |
+| Backend readiness | http://localhost:8000/ready |
 | ADK Web | http://localhost:8765 |
 
 Press `Ctrl+C` once to stop the frontend and backend.
@@ -179,6 +180,7 @@ GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 | `docs/architecture.md` | Stable system boundaries |
 | `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
 | `docs/development.md` | Manual service commands and contributor workflow |
+| `docs/deployment.md` | macOS, Docker, and Cloud Run backend deployment |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |
