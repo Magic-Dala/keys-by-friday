@@ -32,6 +32,14 @@ export function CheckIcon(props: IconProps) {
   );
 }
 
+export function CarIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M5 16v2M19 16v2M4 14l1.5-5h13L20 14v3H4v-3ZM7 14h.01M17 14h.01M7 9l1.2-3h7.6L17 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </IconBase>
+  );
+}
+
 export function CompareIcon(props: IconProps) {
   return (
     <IconBase {...props}>
@@ -56,6 +64,31 @@ export function HeartIcon({ fill = "none", ...props }: IconProps) {
   );
 }
 
+export function ListIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M9 6h10M9 12h10M9 18h10M5 6h.01M5 12h.01M5 18h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </IconBase>
+  );
+}
+
+export function LocationIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M20 10c0 5-8 10-8 10S4 15 4 10a8 8 0 1 1 16 0Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.8" />
+    </IconBase>
+  );
+}
+
+export function MapIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m4 6 5-2 6 2 5-2v14l-5 2-6-2-5 2V6ZM9 4v14M15 6v14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </IconBase>
+  );
+}
+
 export function PlusIcon(props: IconProps) {
   return (
     <IconBase {...props}>
@@ -69,6 +102,15 @@ export function SearchIcon(props: IconProps) {
     <IconBase {...props}>
       <circle cx="10.5" cy="10.5" r="5.5" stroke="currentColor" strokeWidth="1.8" />
       <path d="m15 15 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </IconBase>
+  );
+}
+
+export function TransitIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <rect x="5" y="3" width="14" height="16" rx="3" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8 7h8M5 13h14M8 19l-1 2M16 19l1 2M8.5 16h.01M15.5 16h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </IconBase>
   );
 }

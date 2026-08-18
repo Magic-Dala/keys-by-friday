@@ -224,6 +224,14 @@ p {
   gap: 20px;
 }
 
+.workspace:has(.spatialWorkspace) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace:has(.spatialWorkspace) > .decisionRail {
+  position: static;
+}
+
 .mainPanel {
   min-width: 0;
   min-height: calc(100vh - 122px);
@@ -593,12 +601,301 @@ p {
   font-weight: 650;
 }
 
+.mobileResultsSwitch {
+  display: none;
+}
+
+.spatialWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 58fr) minmax(360px, 42fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.spatialListPane {
+  min-width: 0;
+}
+
+.spatialMapPane {
+  position: sticky;
+  top: 88px;
+  min-width: 0;
+  height: calc(100vh - 112px);
+  min-height: 620px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  border-radius: 24px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.rentalMap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  background: var(--color-surface-muted);
+}
+
+.mapCanvas {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  background: var(--color-surface-muted);
+}
+
+.routeSummary {
+  position: absolute;
+  z-index: 4;
+  top: 18px;
+  right: 18px;
+  left: 18px;
+  max-width: min(430px, calc(100% - 36px));
+  padding: 16px 18px;
+  border: 1px solid var(--color-line);
+  border-radius: 18px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-float);
+  color: var(--color-ink);
+}
+
+.routeSummary::before {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-hover);
+  content: "Route overview";
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.routeSummary .sectionEyebrow {
+  display: none;
+}
+
+.routeSummary h2 {
+  margin: 0 0 6px;
+  color: var(--color-ink);
+  font-size: 18px;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.routeSummary [role="status"] {
+  color: var(--color-copy);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.routeSummary [role="status"] p {
+  margin: 0;
+}
+
+.routeSummary [role="status"] p + p {
+  margin-top: 4px;
+}
+
+.routeSummary [role="status"] strong {
+  color: var(--color-ink);
+}
+
+.routeSummary button {
+  min-height: 44px;
+  margin-top: 12px;
+  padding: 0 14px;
+  border: 1px solid var(--color-danger);
+  border-radius: 12px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.routeSummary-idle::before {
+  content: "Choose a home";
+}
+
+.routeSummary-loading::before {
+  padding-right: 32px;
+  content: "Loading route";
+}
+
+.routeSummary-loading::after {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-brand-soft);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: routeSpin 760ms linear infinite;
+}
+
+.routeSummary-loading::after {
+  position: absolute;
+  top: 22px;
+  left: 111px;
+  content: "";
+}
+
+.routeSummary-available::before {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  content: "\2713  Route available";
+}
+
+.routeSummary-unavailable::before {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  content: "! Route unavailable";
+}
+
+.routeSummary-unknown::before {
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+  content: "? Route unknown";
+}
+
+.routeSummary-error {
+  border-color: var(--color-danger);
+}
+
+.routeSummary-error::before {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  content: "! Route error";
+}
+
+.routeSummary-error [role="status"] {
+  color: var(--color-danger);
+}
+
+@keyframes routeSpin {
+  to { transform: rotate(360deg); }
+}
+
+.rentalMap:has(.mapFallback) {
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr);
+  overflow-y: auto;
+}
+
+.rentalMap:has(.mapFallback) > .routeSummary {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  max-width: none;
+  margin: 18px 18px 0;
+}
+
+.mapFallback {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 160px;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+.mapFallback h3 {
+  margin: 0 0 8px;
+  color: var(--color-ink);
+  font-size: 20px;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.mapFallback > p {
+  margin: 0;
+  color: var(--color-copy);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.mapFallback ul {
+  display: grid;
+  gap: 9px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mapFallback li button {
+  width: 100%;
+  min-height: 52px;
+  display: grid;
+  gap: 3px;
+  padding: 11px 13px;
+  border: 1px solid var(--color-line);
+  border-radius: 13px;
+  background: var(--color-surface);
+  color: var(--color-copy);
+  text-align: left;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.mapFallback li button:hover {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+}
+
+.mapFallback li button strong {
+  color: var(--color-ink);
+}
+
+.mapFallback li button span {
+  overflow-wrap: anywhere;
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) {
+  grid-template-rows: auto minmax(520px, 1fr);
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapCanvas:not([hidden]) {
+  z-index: 1;
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapFallback {
+  z-index: 3;
+  width: calc(100% - 32px);
+  max-height: min(42%, 230px);
+  align-self: end;
+  justify-self: center;
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  margin: 16px;
+  padding: 16px;
+  border: 1px solid var(--color-danger);
+  border-radius: 16px;
+  background: var(--color-danger-soft);
+  box-shadow: var(--shadow-float);
+}
+
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapFallback h3,
+.rentalMap:has(> .mapCanvas:not([hidden])) > .mapFallback > p {
+  color: var(--color-danger);
+}
+
 .listingGrid {
   display: grid;
   gap: 14px;
 }
 
 .listingCard {
+  position: relative;
   padding: 22px;
   border: 1px solid var(--color-line);
   border-radius: 22px;
@@ -606,7 +903,61 @@ p {
   transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
 
-.listingCard:hover {
+.listingMapTarget {
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 72px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+}
+
+.listingCard > :not(.listingMapTarget) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.listingActions,
+.listingCard > .listingActions {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.listingCard a,
+.listingCard button:not(.listingMapTarget) {
+  pointer-events: auto;
+}
+
+.listingCard:has(.listingMapTarget:focus-visible),
+.listingCard.isMapHighlighted,
+.listingCard.isMapSelected {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-soft), var(--shadow-panel);
+}
+
+.mapSelectedLabel {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-hover);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+  animation: mapSelectionEnter 160ms ease-out;
+}
+
+@keyframes mapSelectionEnter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.listingCard:hover:not(.isMapSelected):not(.isMapHighlighted) {
   border-color: var(--color-line-strong);
   box-shadow: 0 12px 34px rgba(29, 29, 31, 0.07);
   transform: translateY(-1px);
@@ -700,7 +1051,43 @@ p {
 }
 
 .listingFacts dd.unknown {
-  color: var(--color-muted);
+  color: var(--color-copy);
+}
+
+.listingFacts dd.available,
+.listingFacts dd.unavailable,
+.listingFacts dd.unknown {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.listingFacts dd.available {
+  color: var(--color-success);
+}
+
+.listingFacts dd.unavailable {
+  color: var(--color-danger);
+}
+
+.listingFacts dd.available::before {
+  content: "\2713";
+}
+
+.listingFacts dd.unavailable::before {
+  content: "!";
+}
+
+.listingFacts dd.unknown::before {
+  color: var(--color-ink);
+  content: "?";
+}
+
+.mapLocationUnavailable {
+  margin: 12px 0 0;
+  color: var(--color-copy);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .inlineIcon {
@@ -1215,6 +1602,71 @@ p {
   }
 }
 
+@media (max-width: 900px) {
+  .spatialWorkspace {
+    display: block;
+  }
+
+  .mobileResultsSwitch {
+    position: sticky;
+    z-index: 7;
+    top: 8px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin: 8px 18px 0;
+    padding: 4px;
+    border: 1px solid var(--color-line);
+    border-radius: 16px;
+    background: var(--color-surface);
+    box-shadow: var(--shadow-float);
+  }
+
+  .mobileResultsSwitch button {
+    min-width: 0;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: var(--color-copy);
+    font-size: 14px;
+    font-weight: 750;
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+
+  .mobileResultsSwitch button[aria-pressed="true"] {
+    background: var(--color-brand-soft);
+    color: var(--color-brand-hover);
+  }
+
+  .mobileResultsSwitch svg {
+    width: 18px;
+    height: 18px;
+    flex: none;
+  }
+
+  .spatialWorkspace[data-mobile-view="list"] .spatialMapPane {
+    display: none;
+  }
+
+  .spatialWorkspace[data-mobile-view="map"] .spatialListPane {
+    display: none;
+  }
+
+  .spatialMapPane {
+    position: relative;
+    top: auto;
+    height: max(60vh, 520px);
+    min-height: 520px;
+    margin: 18px;
+  }
+}
+
 @media (max-width: 880px) {
   .workspace {
     grid-template-columns: minmax(0, 1fr);
@@ -1312,6 +1764,34 @@ p {
     padding: 18px;
   }
 
+  .listingTopline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+
+  .listingTopline > .rank {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .listingTopline > .matchScore {
+    grid-row: 1;
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .listingTopline > .mapSelectedLabel {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-left: 0;
+  }
+
+  .listingMapTarget {
+    inset: 0 0 124px;
+  }
+
   .listingHeading {
     display: grid;
     gap: 14px;
@@ -1372,6 +1852,35 @@ p {
 
   .trustNote {
     grid-column: auto;
+  }
+
+  .mobileResultsSwitch {
+    top: max(8px, env(safe-area-inset-top));
+    margin-inline: 8px;
+  }
+
+  .spatialMapPane {
+    margin: 10px 8px 8px;
+  }
+
+  .routeSummary {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    max-width: calc(100% - 24px);
+    padding: 14px 15px;
+  }
+
+  .rentalMap:has(.mapFallback) > .routeSummary {
+    top: auto;
+    right: auto;
+    left: auto;
+    max-width: none;
+    margin: 12px 12px 0;
+  }
+
+  .mapFallback {
+    padding: 18px 16px max(20px, env(safe-area-inset-bottom));
   }
 }
 
