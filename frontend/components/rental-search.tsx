@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentMessage } from "@/components/agent-message";
 import { Brand } from "@/components/brand";
@@ -8,13 +8,17 @@ import { ComparisonPanel } from "@/components/comparison-panel";
 import {
   CheckIcon,
   HeartIcon,
+  ListIcon,
+  MapIcon,
   PlusIcon,
   SearchIcon,
 } from "@/components/icons";
 import { ListingCard } from "@/components/listing-card";
+import { RentalMap } from "@/components/rental-map";
 import { SearchComposer } from "@/components/search-composer";
+import { useRouteSelection } from "@/hooks/use-route-selection";
 import { sendChat } from "@/lib/api";
-import type { AgentMode, Listing } from "@/types/search";
+import type { AgentMode, CommuteEvaluation, Listing } from "@/types/search";
 
 const examplePrompts = [
   "2 bed under $4,000 in Mountain View with parking",
@@ -69,11 +73,33 @@ function turnId(role: Turn["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function useMobileViewport() {
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean>();
+
+  useEffect(() => {
+    if (!window.matchMedia) {
+      setIsMobileViewport(false);
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 900px)");
+    const updateViewport = () => setIsMobileViewport(mediaQuery.matches);
+    updateViewport();
+    mediaQuery.addEventListener("change", updateViewport);
+    return () => mediaQuery.removeEventListener("change", updateViewport);
+  }, []);
+
+  return isMobileViewport;
+}
+
 export function RentalSearch() {
   const [draft, setDraft] = useState("");
   const [conversationId, setConversationId] = useState<string>();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
+  const [commuteEvaluation, setCommuteEvaluation] = useState<CommuteEvaluation>();
+  const [mobileResultsView, setMobileResultsView] = useState<"list" | "map">("list");
+  const [highlightedListingId, setHighlightedListingId] = useState<string>();
   const [savedListings, setSavedListings] = useState<Listing[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showComparison, setShowComparison] = useState(false);
@@ -84,6 +110,9 @@ export function RentalSearch() {
   const [storageReady, setStorageReady] = useState(false);
   const requestRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const routeSelection = useRouteSelection(conversationId);
+  const isMobileViewport = useMobileViewport();
+  const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
 
   useEffect(() => {
     try {
@@ -121,6 +150,8 @@ export function RentalSearch() {
 
     const controller = new AbortController();
     requestRef.current?.abort();
+    routeSelection.reset();
+    setHighlightedListingId(undefined);
     requestRef.current = controller;
     setTurns((current) => [...current, { id: turnId("user"), role: "user", text: message }]);
     setDraft("");
@@ -136,6 +167,10 @@ export function RentalSearch() {
       setConversationId(response.conversationId);
       setMode(response.mode);
       setListings(response.listings);
+      setCommuteEvaluation(response.commuteEvaluation);
+      routeSelection.reset();
+      setMobileResultsView("list");
+      setHighlightedListingId(undefined);
       setCompareIds([]);
       setShowComparison(false);
       setTurns((current) => [
@@ -162,6 +197,10 @@ export function RentalSearch() {
     setConversationId(undefined);
     setTurns([]);
     setListings([]);
+    setCommuteEvaluation(undefined);
+    routeSelection.reset();
+    setMobileResultsView("list");
+    setHighlightedListingId(undefined);
     setCompareIds([]);
     setShowComparison(false);
     setMode(undefined);
@@ -195,6 +234,16 @@ export function RentalSearch() {
     setCompareIds((current) => [...current, listing.id]);
     setNotice("Added to comparison.");
   }
+
+  const selectOnMap = useCallback((listing: Listing) => {
+    setHighlightedListingId(undefined);
+    setMobileResultsView("map");
+    void routeSelection.selectListing(listing);
+  }, [routeSelection.selectListing]);
+
+  const highlightOnMap = useCallback((listingId?: string) => {
+    setHighlightedListingId(listingId);
+  }, []);
 
   const savedIds = new Set(savedListings.map((listing) => listing.id));
   const knownListings = new Map(
@@ -254,7 +303,23 @@ export function RentalSearch() {
               </div>
             </section>
           ) : (
-            <section className="conversation" aria-label="Rental search conversation" aria-busy={loading}>
+            <>
+              {listings.length > 0 ? (
+                <div className="mobileResultsSwitch" role="group" aria-label="Rental results view">
+                  <button type="button" aria-pressed={mobileResultsView === "list"} onClick={() => setMobileResultsView("list")}>
+                    <ListIcon /> List
+                  </button>
+                  <button type="button" aria-pressed={mobileResultsView === "map"} onClick={() => setMobileResultsView("map")}>
+                    <MapIcon /> Map
+                  </button>
+                </div>
+              ) : null}
+              <div
+                className={listings.length > 0 ? "spatialWorkspace" : undefined}
+                data-mobile-view={listings.length > 0 ? mobileResultsView : undefined}
+              >
+                <div className={listings.length > 0 ? "spatialListPane" : undefined}>
+                  <section className="conversation" aria-label="Rental search conversation" aria-busy={loading}>
               <header className="conversationHeader">
                 <div>
                   <span className="sectionEyebrow">Your search</span>
@@ -300,9 +365,13 @@ export function RentalSearch() {
                         listing={listing}
                         rank={listing.rank ?? index + 1}
                         saved={savedIds.has(listing.id)}
-                        selected={compareIds.includes(listing.id)}
+                        comparisonSelected={compareIds.includes(listing.id)}
+                        mapSelected={routeSelection.state.selectedListingId === listing.id}
+                        mapHighlighted={highlightedListingId === listing.id}
                         onSave={toggleSaved}
                         onSelect={toggleComparison}
+                        onMapSelect={selectOnMap}
+                        onMapHighlight={highlightOnMap}
                         key={listing.id}
                       />
                     ))}
@@ -313,21 +382,37 @@ export function RentalSearch() {
               {showComparison && comparisonListings.length >= 2 ? (
                 <ComparisonPanel listings={comparisonListings} onClose={() => setShowComparison(false)} />
               ) : null}
-            </section>
+                  </section>
+                  <SearchComposer
+                    compareCount={compareIds.length}
+                    draft={draft}
+                    error={error}
+                    hasConversation={Boolean(conversationId)}
+                    loading={loading}
+                    onDraftChange={setDraft}
+                    onShowComparison={() => setShowComparison(true)}
+                    onSubmit={submit}
+                    textareaRef={textareaRef}
+                  />
+                </div>
+                {listings.length > 0 ? (
+                  <aside className="spatialMapPane" aria-label="Rental locations and commute routes">
+                    <RentalMap
+                      listings={listings}
+                      commuteEvaluation={commuteEvaluation}
+                      routeState={routeSelection.state}
+                      highlightedListingId={highlightedListingId}
+                      onSelectListing={selectOnMap}
+                      onHighlightListing={highlightOnMap}
+                      apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}
+                      mapId={process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID}
+                      mapVisible={mapVisible}
+                    />
+                  </aside>
+                ) : null}
+              </div>
+            </>
           )}
-          {turns.length ? (
-            <SearchComposer
-              compareCount={compareIds.length}
-              draft={draft}
-              error={error}
-              hasConversation={Boolean(conversationId)}
-              loading={loading}
-              onDraftChange={setDraft}
-              onShowComparison={() => setShowComparison(true)}
-              onSubmit={submit}
-              textareaRef={textareaRef}
-            />
-          ) : null}
         </main>
 
         <aside className="decisionRail" aria-label="Rental decision progress">
