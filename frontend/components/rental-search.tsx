@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import type { User } from "firebase/auth";
 
 import { AgentMessage } from "@/components/agent-message";
 import { Brand } from "@/components/brand";
@@ -23,6 +24,13 @@ import {
   saveShortlistItem,
   sendChat,
 } from "@/lib/api";
+import {
+  createAccountWithEmail,
+  observeFirebaseUser,
+  signInWithEmail,
+  signInWithGoogle,
+  signOutToAnonymous,
+} from "@/lib/firebase-auth";
 import type {
   AgentMode,
   CommuteEvaluation,
@@ -79,11 +87,21 @@ export function RentalSearch() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>();
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authView, setAuthView] = useState<"sign-in" | "create">("sign-in");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authFormError, setAuthFormError] = useState<string>();
+  const [authFormStatus, setAuthFormStatus] = useState<string>();
   const requestRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const routeSelection = useRouteSelection(conversationId);
   const isMobileViewport = useMobileViewport();
   const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
+
+  useEffect(() => observeFirebaseUser(setAuthUser), []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -105,6 +123,18 @@ export function RentalSearch() {
     const timeout = window.setTimeout(() => setNotice(undefined), 4000);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => {
+    if (!authDialogOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setAuthDialogOpen(false);
+      setAuthFormError(undefined);
+      setAuthFormStatus(undefined);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [authDialogOpen]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -153,6 +183,89 @@ export function RentalSearch() {
   function applyPrompt(prompt: string) {
     setDraft(prompt);
     requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  function openAuthDialog() {
+    setAuthView("sign-in");
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    setAuthDialogOpen(true);
+  }
+
+  function closeAuthDialog() {
+    setAuthDialogOpen(false);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    setAuthPassword("");
+  }
+
+  function switchAuthView(view: "sign-in" | "create") {
+    setAuthView(view);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    setAuthPassword("");
+  }
+
+  async function handleGoogleSignIn() {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    try {
+      setAuthUser(await signInWithGoogle());
+      closeAuthDialog();
+    } catch (caught) {
+      setAuthFormError(caught instanceof Error ? caught.message : "Google sign-in could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleEmailAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (authBusy) return;
+
+    const email = authEmail.trim();
+    if (!email) {
+      setAuthFormError("Enter your email address.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAuthFormError("Enter a valid email address.");
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthFormError("Use at least 6 characters for your password.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    try {
+      const user = authView === "create"
+        ? await createAccountWithEmail(email, authPassword)
+        : await signInWithEmail(email, authPassword);
+      setAuthUser(user);
+      closeAuthDialog();
+    } catch (caught) {
+      setAuthFormError(caught instanceof Error ? caught.message : "Email sign-in could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleSignOut() {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setNotice(undefined);
+    try {
+      setAuthUser(await signOutToAnonymous());
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : "Sign out could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   function startNewSearch() {
@@ -250,6 +363,31 @@ export function RentalSearch() {
         <Brand />
         <div className="topbarActions">
           <span className="agentStatus"><span />Agent ready</span>
+          {authUser?.isAnonymous ? (
+            <button
+              className="authButton signInButton"
+              type="button"
+              onClick={openAuthDialog}
+              disabled={authBusy}
+            >
+              Sign in
+            </button>
+          ) : authUser ? (
+            <div className="accountControls">
+              <div className="accountIdentity">
+                {authUser.displayName ? <strong>{authUser.displayName}</strong> : null}
+                {authUser.email ? <span>{authUser.email}</span> : <span>Google account</span>}
+              </div>
+              <button
+                className="authButton"
+                type="button"
+                onClick={handleSignOut}
+                disabled={authBusy}
+              >
+                {authBusy ? "Signing out…" : "Sign Out"}
+              </button>
+            </div>
+          ) : null}
           {turns.length ? (
             <button className="quietButton" type="button" onClick={startNewSearch}>
               <PlusIcon className="buttonIcon" /> New search
@@ -257,6 +395,111 @@ export function RentalSearch() {
           ) : null}
         </div>
       </header>
+
+      {authUser?.isAnonymous && authDialogOpen ? (
+        <div
+          className="authModalBackdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeAuthDialog();
+          }}
+        >
+          <section
+            className="authDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auth-dialog-title"
+          >
+            <button
+              className="authDialogClose"
+              type="button"
+              aria-label="Close sign in dialog"
+              onClick={closeAuthDialog}
+            >
+              ×
+            </button>
+            <div className="authDialogHeader">
+              <span className="sectionEyebrow">Your Keys account</span>
+              <h2 id="auth-dialog-title">
+                {authView === "create" ? "Create your account" : "Sign in to Keys by Friday"}
+              </h2>
+              <p>
+                {authView === "create"
+                  ? "Keep your shortlist and rental search connected across sessions."
+                  : "Pick up your shortlist and rental search wherever you left off."}
+              </p>
+            </div>
+
+            <form className="authForm" noValidate onSubmit={handleEmailAuth}>
+              <label>
+                <span>Email address</span>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  autoComplete="email"
+                  autoFocus
+                />
+              </label>
+              <div className="authField">
+                <div className="authPasswordLabel">
+                  <label htmlFor="auth-password">Password</label>
+                  {authView === "sign-in" ? (
+                    <button
+                      className="authTextButton"
+                      type="button"
+                      onClick={() => {
+                        setAuthFormError(undefined);
+                        setAuthFormStatus("Password reset is coming soon.");
+                      }}
+                    >
+                      Forgot password?
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  id="auth-password"
+                  type="password"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                  autoComplete={authView === "create" ? "new-password" : "current-password"}
+                />
+              </div>
+
+              {authFormError ? <p className="authFormMessage error" role="alert">{authFormError}</p> : null}
+              {authFormStatus ? <p className="authFormMessage" role="status">{authFormStatus}</p> : null}
+
+              <button className="authPrimaryButton" type="submit" disabled={authBusy}>
+                {authBusy
+                  ? authView === "create" ? "Creating account…" : "Signing in…"
+                  : authView === "create" ? "Create account" : "Sign in"}
+              </button>
+            </form>
+
+            <div className="authDivider" aria-hidden="true"><span>or</span></div>
+
+            <button
+              className="googleAuthButton"
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={authBusy}
+            >
+              <span className="googleAuthMark" aria-hidden="true">G</span>
+              {authBusy ? "Connecting…" : "Continue with Google"}
+            </button>
+
+            <p className="authDialogFooter">
+              {authView === "create" ? "Already have an account?" : "Don’t have an account?"}
+              <button
+                className="authTextButton"
+                type="button"
+                onClick={() => switchAuthView(authView === "create" ? "sign-in" : "create")}
+              >
+                {authView === "create" ? "Sign in" : "Create account"}
+              </button>
+            </p>
+          </section>
+        </div>
+      ) : null}
 
       <div className="workspace">
         <main className="mainPanel" id="main-content">

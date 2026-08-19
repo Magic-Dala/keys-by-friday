@@ -1,5 +1,20 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, type User } from "firebase/auth";
+import { getApp, getApps, initializeApp, type FirebaseError } from "firebase/app";
+import {
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  getAuth,
+  GoogleAuthProvider,
+  linkWithCredential,
+  linkWithPopup,
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithCredential,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  type Unsubscribe,
+  type User,
+} from "firebase/auth";
 
 type AuthMode = "disabled" | "firebase";
 
@@ -42,11 +57,13 @@ function firebaseApp() {
   });
 }
 
-export async function getFirebaseIdToken(): Promise<string | undefined> {
-  if (authMode() === "disabled") return undefined;
+function firebaseAuth() {
+  return getAuth(firebaseApp());
+}
 
-  const auth = getAuth(firebaseApp());
-  if (auth.currentUser) return auth.currentUser.getIdToken();
+async function ensureAnonymousUser(): Promise<User> {
+  const auth = firebaseAuth();
+  if (auth.currentUser) return auth.currentUser;
 
   if (!anonymousSignIn) {
     anonymousSignIn = signInAnonymously(auth)
@@ -56,6 +73,99 @@ export async function getFirebaseIdToken(): Promise<string | undefined> {
       });
   }
 
-  const user = await anonymousSignIn;
+  return anonymousSignIn;
+}
+
+function isCredentialCollision(error: unknown): error is FirebaseError {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = (error as { code?: unknown }).code;
+  return code === "auth/credential-already-in-use";
+}
+
+function isEmailAccountCollision(error: unknown): error is FirebaseError {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = (error as { code?: unknown }).code;
+  return (
+    code === "auth/email-already-in-use" ||
+    code === "auth/credential-already-in-use"
+  );
+}
+
+export function observeFirebaseUser(listener: (user: User | null) => void): Unsubscribe {
+  if (authMode() === "disabled") {
+    listener(null);
+    return () => undefined;
+  }
+  return onAuthStateChanged(firebaseAuth(), listener);
+}
+
+export async function signInWithGoogle(): Promise<User> {
+  if (authMode() === "disabled") {
+    throw new Error("Firebase auth is disabled.");
+  }
+
+  const auth = firebaseAuth();
+  const provider = new GoogleAuthProvider();
+  const currentUser = auth.currentUser;
+
+  if (!currentUser?.isAnonymous) {
+    return (await signInWithPopup(auth, provider)).user;
+  }
+
+  try {
+    return (await linkWithPopup(currentUser, provider)).user;
+  } catch (caught) {
+    if (!isCredentialCollision(caught)) throw caught;
+    const credential = GoogleAuthProvider.credentialFromError(caught);
+    if (!credential) throw caught;
+    return (await signInWithCredential(auth, credential)).user;
+  }
+}
+
+export async function createAccountWithEmail(email: string, password: string): Promise<User> {
+  if (authMode() === "disabled") {
+    throw new Error("Firebase auth is disabled.");
+  }
+
+  const auth = firebaseAuth();
+  const currentUser = auth.currentUser;
+
+  if (!currentUser?.isAnonymous) {
+    return (await createUserWithEmailAndPassword(auth, email, password)).user;
+  }
+
+  const credential = EmailAuthProvider.credential(email, password);
+  try {
+    return (await linkWithCredential(currentUser, credential)).user;
+  } catch (caught) {
+    if (!isEmailAccountCollision(caught)) throw caught;
+    return (await signInWithEmailAndPassword(auth, email, password)).user;
+  }
+}
+
+export async function signInWithEmail(email: string, password: string): Promise<User> {
+  if (authMode() === "disabled") {
+    throw new Error("Firebase auth is disabled.");
+  }
+
+  return (await signInWithEmailAndPassword(firebaseAuth(), email, password)).user;
+}
+
+export async function signOutToAnonymous(): Promise<User> {
+  if (authMode() === "disabled") {
+    throw new Error("Firebase auth is disabled.");
+  }
+
+  const auth = firebaseAuth();
+  anonymousSignIn = undefined;
+  await signOut(auth);
+  const credential = await signInAnonymously(auth);
+  return credential.user;
+}
+
+export async function getFirebaseIdToken(): Promise<string | undefined> {
+  if (authMode() === "disabled") return undefined;
+
+  const user = await ensureAnonymousUser();
   return user.getIdToken();
 }
