@@ -7,7 +7,12 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.genai import types
 
-from backend.app.adk_runtime import create_adk_runner, create_adk_session_service
+from backend.app.adk_runtime import (
+    ADK_APP_NAME,
+    AdkSessionReadinessProbe,
+    create_adk_runner,
+    create_adk_session_service,
+)
 from backend.app.models.search import SearchResponse
 from backend.app.repositories.memory import MemoryConversationRepository
 from backend.app.services.agent_service import AgentService
@@ -43,6 +48,22 @@ class _RestartTestAgent(BaseAgent):
         )
 
 
+class _ReadinessSessionService:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.lookup: dict[str, str] | None = None
+        self.closed = False
+
+    async def get_session(self, **lookup):
+        self.lookup = lookup
+        if self.error is not None:
+            raise self.error
+        return None
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 def _database_runner(database_url: str):
     return create_adk_runner(
         mode="database",
@@ -55,6 +76,37 @@ def test_memory_session_service_is_the_local_default() -> None:
     service = create_adk_session_service("memory")
 
     assert type(service).__name__ == "InMemorySessionService"
+
+
+def test_database_readiness_probe_completes_an_official_session_lookup() -> None:
+    service = _ReadinessSessionService()
+    probe = AdkSessionReadinessProbe(
+        "postgresql+asyncpg://not-used",
+        session_service=service,
+    )
+
+    async def scenario() -> bool:
+        result = await probe.check()
+        await probe.close()
+        return result
+
+    assert asyncio.run(scenario()) is True
+    assert service.lookup == {
+        "app_name": ADK_APP_NAME,
+        "user_id": "__readiness__",
+        "session_id": "__database_connectivity__",
+    }
+    assert service.closed is True
+
+
+def test_database_readiness_probe_hides_connection_failures() -> None:
+    service = _ReadinessSessionService(ConnectionRefusedError("private host"))
+    probe = AdkSessionReadinessProbe(
+        "postgresql+asyncpg://not-used",
+        session_service=service,
+    )
+
+    assert asyncio.run(probe.check()) is False
 
 
 def test_database_session_survives_backend_service_restart(tmp_path) -> None:

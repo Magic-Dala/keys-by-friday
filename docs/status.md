@@ -80,7 +80,7 @@ Next.js Frontend
 - ✅ Cloud Run-compatible backend container
 - ✅ Backend configuration validation for environment, logging, and Agent timeout
 - ✅ Cloud-friendly structured JSON request logs and request IDs
-- ✅ Separate liveness (`/health`) and configuration readiness (`/ready`) checks
+- ✅ Separate liveness (`/health`) and dependency readiness (`/ready`) checks
 - ✅ Bounded Agent execution time with a stable API failure boundary
 - ✅ Secret Manager-based deployment instructions for macOS
 - ✅ Optional anonymous Firebase sign-in in the Next.js frontend
@@ -97,6 +97,7 @@ Next.js Frontend
 - ✅ Firestore client rules deny direct browser access
 - ✅ Configurable official ADK session service: memory locally, database in production
 - ✅ Restart-safe ADK event history and Agent state through PostgreSQL / Cloud SQL
+- ✅ `/ready` verifies a real ADK database lookup before serving production traffic
 - ✅ Same-conversation turns serialized to prevent stale simultaneous follow-ups
 - ✅ Python 3.12 pinned consistently for macOS development and the backend container
 
@@ -116,8 +117,8 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 163 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, restart restoration, same-conversation concurrency, commute integration, cross-user isolation, decision intelligence, and Agent observability
-- ✅ Milestone 4 focused ADK session/runtime suite: 3 passed without Gemini or cloud quota
+- ✅ Full Python / Backend / Agent suite: 166 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`

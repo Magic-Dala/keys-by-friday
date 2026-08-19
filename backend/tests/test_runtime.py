@@ -7,6 +7,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.adk_runtime import AdkSessionReadinessProbe
 from backend.app.config import (
     Settings,
     _adk_session_mode,
@@ -118,6 +119,10 @@ def test_readiness_reports_missing_adk_configuration(
 def test_readiness_accepts_configured_adk_and_realtyapi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def connected(_: AdkSessionReadinessProbe) -> bool:
+        return True
+
+    monkeypatch.setattr(AdkSessionReadinessProbe, "check", connected)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
     monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
     monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
@@ -146,7 +151,40 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
     assert response.json()["checks"]["agent"] == "configured"
     assert response.json()["checks"]["provider"] == "configured"
     assert response.json()["checks"]["persistence"] == "configured"
-    assert response.json()["checks"]["adk_session"] == "configured"
+    assert response.json()["checks"]["adk_session"] == "connected"
+
+
+def test_readiness_rejects_unreachable_adk_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unavailable(_: AdkSessionReadinessProbe) -> bool:
+        return False
+
+    monkeypatch.setattr(AdkSessionReadinessProbe, "check", unavailable)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
+    monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
+    monkeypatch.setenv("REALTYAPI_API_KEY", "test-realty-key")
+    settings = Settings(
+        agent_mode="adk",
+        app_environment="production",
+        auth_mode="firebase",
+        firebase_project_id="test-project",
+        persistence_mode="firestore",
+        firestore_project_id="test-project",
+        adk_session_mode="database",
+        adk_session_database_url=(
+            "postgresql+asyncpg://user:password@unreachable/sessions"
+        ),
+    )
+
+    response = TestClient(create_app(settings)).get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["checks"]["adk_session"] == "unavailable"
+    assert "password" not in response.text
+    assert "unreachable" not in response.text
 
 
 def test_production_readiness_rejects_stub_and_mock(

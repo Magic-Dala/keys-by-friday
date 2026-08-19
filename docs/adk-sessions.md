@@ -101,6 +101,18 @@ ADK_SESSION_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@/DATABASE?host=/clou
 The URL is a secret because it contains a database password. Store it in Secret
 Manager; never commit it or include it in screenshots.
 
+## What database readiness verifies
+
+`/health` only proves that the FastAPI process is alive. When database session
+mode is selected, `/ready` also asks ADK's official `DatabaseSessionService` to
+perform a non-user session lookup. This forces the service to connect and
+prepare its tables before Cloud Run sends normal Agent traffic.
+
+The lookup uses reserved readiness IDs and does not create a user conversation.
+It has a five-second timeout. Connection, socket, credential, schema, or timeout
+failures produce HTTP 503 with `adk_session: unavailable`; sensitive database
+details are not returned to the caller.
+
 ## Why PostgreSQL / Cloud SQL was selected
 
 ADK officially supports `DatabaseSessionService` for relational databases. This
@@ -176,7 +188,7 @@ uv run --extra dev --extra backend pytest backend/tests/test_adk_sessions.py -q
 Desired ending:
 
 ```text
-3 passed
+5 passed
 ```
 
 These tests make zero Gemini, RealtyAPI, Maps, Firestore, or Cloud SQL calls.
@@ -285,11 +297,13 @@ Local memory mode reports:
 "adk_session": "memory"
 ```
 
-Configured database mode reports:
+Reachable database mode reports:
 
 ```json
-"adk_session": "configured"
+"adk_session": "connected"
 ```
+
+Configured but unreachable database mode reports `unavailable` with HTTP 503.
 
 Production rejects these unsafe configurations:
 
@@ -333,6 +347,8 @@ Cloud SQL Admin role to serve requests.
 | `/ready` shows `memory` | Restart-safe sessions are not selected | set database mode and restart backend |
 | `/ready` shows `not_configured` | Database mode has no URL | set `ADK_SESSION_DATABASE_URL` |
 | `/ready` shows `sqlite_not_allowed` | A local file was configured in production | use Cloud SQL PostgreSQL |
+| `/ready` shows `connected` | ADK completed a real database session lookup | the session database is ready |
+| `/ready` shows `unavailable` | ADK could not complete its database lookup within five seconds | check the URL secret, Cloud SQL attachment, password, database, IAM, and instance availability |
 | Chat returns `502` immediately | ADK session service could not initialize/connect | check driver, URL, secret, Cloud SQL attachment, and IAM |
 | First turn works but restart loses context | requests used different session stores or IDs | check mode, URL, uid, and exact `conversationId` |
 | Simultaneous follow-up waits | the same-conversation safety lock is working | allow the first turn to complete |
@@ -340,10 +356,10 @@ Cloud SQL Admin role to serve requests.
 
 ## Gemini 3.7 note
 
-The repository is configured to attempt the team-selected
-`gemini-3.7-flash` model first and retains fallback models in local
-configuration. Model selection is independent of session storage: changing the
-model does not change where ADK history is saved.
+The Rental Agent owns Gemini model selection and fallback policy. The backend
+environment and Cloud Run configuration intentionally do not set model-routing
+variables. Model selection is independent of session storage: changing an
+Agent-owned model does not change where ADK history is saved.
 
 Before deploying, run one live request in the intended Vertex AI project and
 region to confirm that the exact model ID is available to that project. A model

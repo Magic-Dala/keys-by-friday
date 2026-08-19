@@ -9,8 +9,12 @@ def _is_true(value: str | None) -> bool:
     return (value or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
-def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
-    """Check configuration without calling Gemini or consuming provider quota."""
+def readiness_report(
+    settings: Settings,
+    *,
+    adk_session_connected: bool | None = None,
+) -> tuple[bool, dict[str, str]]:
+    """Check configuration and supplied ADK database connectivity evidence."""
 
     checks = {"api": "ok"}
     is_production = settings.app_environment == "production"
@@ -46,9 +50,12 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
     ):
         session_ready = False
         checks["adk_session"] = "sqlite_not_allowed"
-    else:
+    elif adk_session_connected is True:
         session_ready = True
-        checks["adk_session"] = "configured"
+        checks["adk_session"] = "connected"
+    else:
+        session_ready = False
+        checks["adk_session"] = "unavailable"
 
     if settings.agent_mode == "stub" and not is_production:
         checks["agent"] = "stub"

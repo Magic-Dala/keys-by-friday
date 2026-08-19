@@ -361,7 +361,10 @@ instance.
 
 After deployment, configure an HTTP startup/readiness probe for `/ready` and an
 HTTP liveness probe for `/health` in the Cloud Run console under **Containers,
-Networking, Security → Health checks**.
+Networking, Security → Health checks**. In database session mode, `/ready`
+returns HTTP 200 only after ADK completes a real non-user lookup through the
+configured Cloud SQL connection. A connection, socket, credential, schema, or
+timeout failure returns HTTP 503 without exposing the database URL.
 
 ## Test the deployed service
 
@@ -406,6 +409,13 @@ curl -i \
   -H "Authorization: Bearer ${KBF_CLOUD_RUN_TOKEN}" \
   "$KBF_BACKEND_URL/ready"
 ```
+
+The desired readiness response is HTTP 200 with
+`"adk_session":"connected"`. HTTP 503 with
+`"adk_session":"unavailable"` means the process is alive but the ADK session
+database did not answer. Check the Secret Manager value, Cloud SQL attachment,
+database/user/password, `roles/cloudsql.client`, and instance availability
+before sending Agent traffic.
 
 Confirm that FastAPI still rejects a chat request without a Firebase token. Use
 `X-Serverless-Authorization` for the Cloud Run token so the normal
