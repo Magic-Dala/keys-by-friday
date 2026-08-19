@@ -334,6 +334,46 @@ p {
   box-shadow: 0 0 0 3px rgba(23, 92, 211, 0.12);
 }
 
+.authPasswordInput {
+  position: relative;
+}
+
+.authPasswordInput input {
+  padding-right: 56px;
+}
+
+.authPasswordToggle {
+  position: absolute;
+  top: 50%;
+  right: 1px;
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-muted);
+  transform: translateY(-50%);
+}
+
+.authPasswordToggle:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+.authPasswordToggle:focus-visible {
+  outline: 3px solid rgba(23, 92, 211, 0.22);
+  outline-offset: -2px;
+}
+
+.authPasswordToggle svg {
+  width: 19px;
+  height: 19px;
+}
+
 .authFormMessage {
   margin: -2px 0 0;
   padding: 9px 11px;

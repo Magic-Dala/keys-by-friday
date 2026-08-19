@@ -139,6 +139,24 @@ it("opens one sign-in dialog that contains Google and email options", async () =
   expect(email.compareDocumentPosition(google) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
+it("toggles the email/password visibility control", async () => {
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+
+  await user.click(await screen.findByRole("button", { name: "Sign in" }));
+  const dialog = screen.getByRole("dialog");
+  const password = within(dialog).getByLabelText("Password");
+  const toggle = within(dialog).getByRole("button", { name: "Show password" });
+
+  expect(password).toHaveAttribute("type", "password");
+  await user.click(toggle);
+  expect(password).toHaveAttribute("type", "text");
+  expect(within(dialog).getByRole("button", { name: "Hide password" })).toBeVisible();
+
+  await user.click(within(dialog).getByRole("button", { name: "Hide password" }));
+  expect(password).toHaveAttribute("type", "password");
+});
+
 it("signs in with Google from the sign-in dialog", async () => {
   vi.mocked(signInWithGoogle).mockResolvedValue({
     uid: "anon-1",

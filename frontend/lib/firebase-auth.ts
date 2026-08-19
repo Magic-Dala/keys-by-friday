@@ -96,7 +96,10 @@ export function observeFirebaseUser(listener: (user: User | null) => void): Unsu
     listener(null);
     return () => undefined;
   }
-  return onAuthStateChanged(firebaseAuth(), listener);
+  const auth = firebaseAuth();
+  const unsubscribe = onAuthStateChanged(auth, listener);
+  void ensureAnonymousUser().catch(() => undefined);
+  return unsubscribe;
 }
 
 export async function signInWithGoogle(): Promise<User> {
