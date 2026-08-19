@@ -15,9 +15,12 @@ Browser
 → Firebase Admin token verification
 → FastAPI services and repository interfaces
   ├→ AgentService
-  │  └→ Google ADK Rental Agent
-  │     ├→ Rental Provider
-  │     └→ Maps / Routes Service (when commute evidence is requested)
+  │  ├→ Google ADK Rental Agent
+  │  │  ├→ Rental Provider
+  │  │  └→ Maps / Routes Service (when commute evidence is requested)
+  │  └→ ADK SessionService
+  │     ├→ memory for local development and tests
+  │     └→ PostgreSQL / Cloud SQL for production session history and state
   └→ Firestore → conversation metadata and user shortlist
 ```
 
@@ -57,6 +60,7 @@ not an in-progress heartbeat.
 - translate ADK lifecycle/activity metadata if a progress transport is implemented
 - verify Firebase identity and bind conversations to the verified uid
 - persist conversation metadata and shortlist snapshots through repository interfaces
+- select and operate the ADK session service used for conversational continuity
 
 The backend is an adapter, not a second rental-decision engine.
 
@@ -81,6 +85,8 @@ The backend is an adapter, not a second rental-decision engine.
 - Backend never trusts a user ID supplied by browser data.
 - Frontend never accesses Firestore directly; it uses authenticated FastAPI routes.
 - Firestore persistence does not duplicate Agent, provider, ranking, or Maps logic.
+- Firestore application data and the ADK session database have different jobs:
+  Firestore owns product metadata/shortlists; ADK owns Agent events and state.
 - Agent does not depend on Next.js or frontend-specific UI types.
 - Agent activity metadata is truthful execution state, not a second UI contract.
 - Provider-specific details should not leak through every layer.

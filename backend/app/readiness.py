@@ -9,8 +9,12 @@ def _is_true(value: str | None) -> bool:
     return (value or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
-def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
-    """Check configuration without calling Gemini or consuming provider quota."""
+def readiness_report(
+    settings: Settings,
+    *,
+    adk_session_connected: bool | None = None,
+) -> tuple[bool, dict[str, str]]:
+    """Check configuration and supplied ADK database connectivity evidence."""
 
     checks = {"api": "ok"}
     is_production = settings.app_environment == "production"
@@ -33,10 +37,30 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
             "configured" if persistence_ready else "not_configured"
         )
 
+    if settings.adk_session_mode == "memory":
+        session_ready = not is_production
+        checks["adk_session"] = (
+            "memory" if session_ready else "memory_not_allowed"
+        )
+    elif not settings.adk_session_database_url:
+        session_ready = False
+        checks["adk_session"] = "not_configured"
+    elif is_production and settings.adk_session_database_url.casefold().startswith(
+        "sqlite"
+    ):
+        session_ready = False
+        checks["adk_session"] = "sqlite_not_allowed"
+    elif adk_session_connected is True:
+        session_ready = True
+        checks["adk_session"] = "connected"
+    else:
+        session_ready = False
+        checks["adk_session"] = "unavailable"
+
     if settings.agent_mode == "stub" and not is_production:
         checks["agent"] = "stub"
         checks["provider"] = "not_required"
-        return auth_ready and persistence_ready, checks
+        return auth_ready and persistence_ready and session_ready, checks
 
     if settings.agent_mode == "stub":
         agent_ready = False
@@ -68,4 +92,11 @@ def readiness_report(settings: Settings) -> tuple[bool, dict[str, str]]:
         provider_ready = False
         checks["provider"] = "unsupported"
 
-    return auth_ready and persistence_ready and agent_ready and provider_ready, checks
+    return (
+        auth_ready
+        and persistence_ready
+        and session_ready
+        and agent_ready
+        and provider_ready,
+        checks,
+    )

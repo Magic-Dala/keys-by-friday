@@ -118,8 +118,9 @@ The user can save, list, remove, and compare shortlisted properties without losi
 
 Current implementation note: FastAPI now provides authenticated save/list/remove
 routes backed by repository interfaces and Firestore, and saved snapshots retain
-available coordinate/commute evidence. Notes, user-authored reasons, and full ADK
-session restoration remain future refinements.
+available coordinate/commute evidence. Full ADK session restoration is now
+available through database session mode. Notes and user-authored reasons remain
+future refinements.
 
 ---
 

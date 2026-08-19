@@ -7,8 +7,10 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.adk_runtime import AdkSessionReadinessProbe
 from backend.app.config import (
     Settings,
+    _adk_session_mode,
     _app_environment,
     _log_level,
     _positive_seconds,
@@ -80,6 +82,7 @@ def test_readiness_is_ready_in_stub_mode(monkeypatch: pytest.MonkeyPatch) -> Non
             "api": "ok",
             "auth": "disabled",
             "persistence": "memory",
+            "adk_session": "memory",
             "agent": "stub",
             "provider": "not_required",
         },
@@ -116,6 +119,10 @@ def test_readiness_reports_missing_adk_configuration(
 def test_readiness_accepts_configured_adk_and_realtyapi(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def connected(_: AdkSessionReadinessProbe) -> bool:
+        return True
+
+    monkeypatch.setattr(AdkSessionReadinessProbe, "check", connected)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
     monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
     monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
@@ -129,6 +136,10 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
                 firebase_project_id="test-project",
                 persistence_mode="firestore",
                 firestore_project_id="test-project",
+                adk_session_mode="database",
+                adk_session_database_url=(
+                    "postgresql+asyncpg://user:password@database/sessions"
+                ),
             )
         )
     )
@@ -140,6 +151,40 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
     assert response.json()["checks"]["agent"] == "configured"
     assert response.json()["checks"]["provider"] == "configured"
     assert response.json()["checks"]["persistence"] == "configured"
+    assert response.json()["checks"]["adk_session"] == "connected"
+
+
+def test_readiness_rejects_unreachable_adk_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unavailable(_: AdkSessionReadinessProbe) -> bool:
+        return False
+
+    monkeypatch.setattr(AdkSessionReadinessProbe, "check", unavailable)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
+    monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
+    monkeypatch.setenv("REALTYAPI_API_KEY", "test-realty-key")
+    settings = Settings(
+        agent_mode="adk",
+        app_environment="production",
+        auth_mode="firebase",
+        firebase_project_id="test-project",
+        persistence_mode="firestore",
+        firestore_project_id="test-project",
+        adk_session_mode="database",
+        adk_session_database_url=(
+            "postgresql+asyncpg://user:password@unreachable/sessions"
+        ),
+    )
+
+    response = TestClient(create_app(settings)).get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["checks"]["adk_session"] == "unavailable"
+    assert "password" not in response.text
+    assert "unreachable" not in response.text
 
 
 def test_production_readiness_rejects_stub_and_mock(
@@ -215,6 +260,57 @@ def test_production_readiness_requires_firestore_persistence(
 
     assert response.status_code == 503
     assert response.json()["checks"]["persistence"] == "memory_not_allowed"
+
+
+def test_production_readiness_requires_persistent_adk_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
+    monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
+    monkeypatch.setenv("REALTYAPI_API_KEY", "test-realty-key")
+    client = TestClient(
+        create_app(
+            Settings(
+                agent_mode="adk",
+                app_environment="production",
+                auth_mode="firebase",
+                firebase_project_id="test-project",
+                persistence_mode="firestore",
+                firestore_project_id="test-project",
+                adk_session_mode="memory",
+            )
+        )
+    )
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["adk_session"] == "memory_not_allowed"
+
+
+def test_production_readiness_rejects_ephemeral_sqlite_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
+    monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
+    monkeypatch.setenv("REALTYAPI_API_KEY", "test-realty-key")
+    settings = Settings(
+        agent_mode="adk",
+        app_environment="production",
+        auth_mode="firebase",
+        firebase_project_id="test-project",
+        persistence_mode="firestore",
+        firestore_project_id="test-project",
+        adk_session_mode="database",
+        adk_session_database_url="sqlite+aiosqlite:///sessions.db",
+    )
+
+    response = TestClient(create_app(settings)).get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["adk_session"] == "sqlite_not_allowed"
 
 
 def test_agent_timeout_becomes_stable_service_error(
@@ -334,3 +430,19 @@ def test_environment_and_log_level_configuration_are_validated() -> None:
         _app_environment("demo")
     with pytest.raises(ValueError, match="LOG_LEVEL"):
         _log_level("verbose")
+
+
+def test_adk_session_mode_configuration_is_validated() -> None:
+    assert _adk_session_mode(" Memory ") == "memory"
+    assert _adk_session_mode(" DATABASE ") == "database"
+    with pytest.raises(ValueError, match="ADK_SESSION_MODE"):
+        _adk_session_mode("firestore")
+
+
+def test_settings_repr_does_not_expose_session_database_url() -> None:
+    settings = Settings(
+        adk_session_mode="database",
+        adk_session_database_url="postgresql+asyncpg://user:secret@host/db",
+    )
+
+    assert "secret" not in repr(settings)
