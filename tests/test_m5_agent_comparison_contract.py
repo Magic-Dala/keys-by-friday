@@ -217,3 +217,96 @@ def test_session_legacy_and_canonical_status_do_not_diverge_on_ambiguous_rent_ra
     assert canonical["hardConstraintStatus"] == "unknown"
     assert canonical["satisfiesCurrentRequirements"] is None
     assert legacy["decision_ready"] is False
+
+
+def test_backend_commute_json_round_trip_preserves_available_duration():
+    canonical = json.loads(json.dumps(_listing("commute").to_backend_dict()))
+    req = replace(
+        _requirements(),
+        commute_destination="Google Mountain View",
+        max_commute_minutes=30,
+        commute_travel_mode="DRIVE",
+    )
+    backend_commute = json.loads(
+        json.dumps(
+            {
+                "destination": "Google Mountain View",
+                "destinationPlaceId": "place-google-mv",
+                "mode": "DRIVE",
+                "durationMinutes": 18,
+                "distanceMeters": 12400,
+                "status": "available",
+                "routingPreference": "TRAFFIC_AWARE",
+            }
+        )
+    )
+
+    result = compare_canonical_listings(
+        [canonical], req, commutes={"commute": backend_commute}
+    )["results"][0]
+
+    assert result["hardConstraintStatus"] == "pass"
+    assert result["satisfiesCurrentRequirements"] is True
+
+
+def test_restored_commute_must_match_current_destination_and_mode():
+    canonical = json.loads(json.dumps(_listing("commute").to_backend_dict()))
+    req = replace(
+        _requirements(),
+        commute_destination="Google Mountain View",
+        max_commute_minutes=30,
+        commute_travel_mode="DRIVE",
+    )
+    base_commute = {
+        "destination": "Google Mountain View",
+        "mode": "DRIVE",
+        "durationMinutes": 18,
+        "status": "available",
+    }
+
+    wrong_destination = compare_canonical_listings(
+        [canonical],
+        req,
+        commutes={"commute": {**base_commute, "destination": "Downtown San Jose"}},
+    )["results"][0]
+    wrong_mode = compare_canonical_listings(
+        [canonical],
+        req,
+        commutes={"commute": {**base_commute, "mode": "TRANSIT"}},
+    )["results"][0]
+
+    assert wrong_destination["hardConstraintStatus"] == "unknown"
+    assert wrong_destination["satisfiesCurrentRequirements"] is None
+    assert wrong_mode["hardConstraintStatus"] == "unknown"
+    assert wrong_mode["satisfiesCurrentRequirements"] is None
+
+
+def test_max_bathrooms_uses_authoritative_lower_bound_as_hard_failure():
+    row = replace(
+        _listing("bath-lower-bound"),
+        bathrooms=None,
+        bathrooms_min_evidence=3,
+    )
+    canonical = json.loads(json.dumps(row.to_backend_dict()))
+    req = replace(_requirements(), max_bathrooms=2)
+
+    result = compare_canonical_listings([canonical], req)["results"][0]
+
+    assert result["hardConstraintStatus"] == "fail"
+    assert result["satisfiesCurrentRequirements"] is False
+
+
+def test_max_bathrooms_query_backed_lower_bound_remains_evidence_only():
+    row = replace(
+        _listing("bath-query-backed"),
+        bathrooms=None,
+        bathrooms_min_evidence=3,
+        query_backed_fields=("bathrooms_min_evidence",),
+    )
+    canonical = json.loads(json.dumps(row.to_backend_dict()))
+    req = replace(_requirements(), max_bathrooms=2)
+
+    result = compare_canonical_listings([canonical], req)["results"][0]
+
+    assert result["hardConstraintStatus"] == "evidence_only"
+    assert result["satisfiesCurrentRequirements"] is None

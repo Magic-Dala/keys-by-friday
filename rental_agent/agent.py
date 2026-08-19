@@ -364,25 +364,34 @@ def _listing_from_canonical_v1(value: dict[str, Any]) -> Listing:
 def _commute_from_dict(value: object) -> CommuteResult | None:
     if not isinstance(value, dict) or not value.get("destination"):
         return None
+    destination_place_id = value.get("destination_place_id")
+    if destination_place_id is None:
+        destination_place_id = value.get("destinationPlaceId")
+    duration = value.get("duration_minutes")
+    if duration is None:
+        duration = value.get("durationMinutes")
+    distance = value.get("distance_meters")
+    if distance is None:
+        distance = value.get("distanceMeters")
+    routing_preference = value.get("routing_preference")
+    if routing_preference is None:
+        routing_preference = value.get("routingPreference")
     return CommuteResult(
         destination=str(value["destination"]),
         destination_place_id=(
-            str(value["destination_place_id"])
-            if value.get("destination_place_id")
-            else None
+            str(destination_place_id) if destination_place_id else None
         ),
         mode=str(value["mode"]) if value.get("mode") else None,
         duration_minutes=(
-            int(value["duration_minutes"])
-            if isinstance(value.get("duration_minutes"), (int, float))
-            else None
+            int(duration) if isinstance(duration, (int, float)) else None
         ),
         distance_meters=(
-            int(value["distance_meters"])
-            if isinstance(value.get("distance_meters"), (int, float))
-            else None
+            int(distance) if isinstance(distance, (int, float)) else None
         ),
         status=str(value.get("status") or "unknown"),
+        routing_preference=(
+            str(routing_preference) if routing_preference else None
+        ),
     )
 
 
@@ -1514,12 +1523,18 @@ def _canonical_hard_constraint_result(
 
     if req.max_bathrooms is not None:
         exact = number(property_data.get("bathrooms"))
-        if exact is None:
-            outcomes.append("unknown")
-        elif "property.bathrooms" in query_backed:
+        minimum_evidence = number(property_data.get("bathroomsMinEvidence"))
+        if exact is not None and "property.bathrooms" in query_backed:
             outcomes.append("evidence_only")
-        else:
+        elif exact is not None:
             outcomes.append("fail" if exact > req.max_bathrooms else "pass")
+        elif minimum_evidence is not None and minimum_evidence > req.max_bathrooms:
+            if "property.bathroomsMinEvidence" in query_backed:
+                outcomes.append("evidence_only")
+            else:
+                outcomes.append("fail")
+        else:
+            outcomes.append("unknown")
 
     if req.pets_required:
         pets = policies.get("petsAllowed")
@@ -1540,10 +1555,28 @@ def _canonical_hard_constraint_result(
             outcomes.append("pass" if parking is True else "fail")
 
     if req.max_commute_minutes is not None:
+        expected_destination = (
+            req.commute_destination.strip().casefold()
+            if req.commute_destination and req.commute_destination.strip()
+            else None
+        )
+        expected_mode = normalize_travel_mode(req.commute_travel_mode)
+        commute_destination = (
+            commute.destination.strip().casefold()
+            if commute is not None and commute.destination.strip()
+            else None
+        )
+        commute_mode = (
+            normalize_travel_mode(commute.mode) if commute is not None else None
+        )
         if (
             commute is None
             or commute.status != "available"
             or commute.duration_minutes is None
+            or expected_destination is None
+            or expected_mode is None
+            or commute_destination != expected_destination
+            or commute_mode != expected_mode
         ):
             outcomes.append("unknown")
         else:
