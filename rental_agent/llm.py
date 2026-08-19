@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-import os
+
 from collections.abc import AsyncGenerator
 
 from google.adk.models import BaseLlm, Gemini
@@ -10,32 +10,13 @@ from google.adk.models.llm_response import LlmResponse
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_ORDER: tuple[str, ...] = (
-    "gemini-3.5-flash-lite",
+AGENT_ROUTINE_MODEL_ORDER: tuple[str, ...] = (
     "gemini-3.1-flash-lite",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
 )
-DEFAULT_SEARCH_MODEL = "gemini-3.7-flash"
+AGENT_REASONING_MODEL = "gemini-3.7-flash"
 
 _FALLBACK_HTTP_CODES = {404, 408, 429, 500, 502, 503, 504}
-
-
-def configured_model_order() -> tuple[str, ...]:
-    """Return the ordered Gemini fallback chain from GEMINI_MODELS."""
-    raw = os.getenv("GEMINI_MODELS", "")
-    values = [item.strip() for item in raw.split(",") if item.strip()]
-    if not values:
-        return DEFAULT_MODEL_ORDER
-
-    # Preserve caller order while removing accidental duplicates.
-    return tuple(dict.fromkeys(values))
-
-
-def configured_search_model() -> str:
-    """Return the Gemini model used for user-input search/intent planning."""
-    return os.getenv("GEMINI_SEARCH_MODEL", DEFAULT_SEARCH_MODEL).strip() or DEFAULT_SEARCH_MODEL
 
 
 def _is_user_input_request(llm_request: LlmRequest) -> bool:
@@ -121,9 +102,9 @@ class OrderedGeminiFallback(BaseLlm):
 
 
 def build_ordered_gemini() -> OrderedGeminiFallback:
-    models = configured_model_order()
+    """Build the Agent-owned Gemini routing policy."""
     return OrderedGeminiFallback(
-        model=models[0],
-        fallback_models=models[1:],
-        search_model=configured_search_model(),
+        model=AGENT_ROUTINE_MODEL_ORDER[0],
+        fallback_models=AGENT_ROUTINE_MODEL_ORDER[1:],
+        search_model=AGENT_REASONING_MODEL,
     )
