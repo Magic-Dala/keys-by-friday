@@ -187,3 +187,33 @@ def test_canonical_comparison_order_and_results_are_deterministic():
     assert first["schemaVersion"] == "kbf.canonical-comparison.v1"
     assert first["listingIds"] == ["two", "one"]
     assert [item["listingId"] for item in first["results"]] == ["two", "one"]
+
+
+def test_session_legacy_and_canonical_status_do_not_diverge_on_ambiguous_rent_range():
+    row = replace(
+        _listing("range"),
+        rent=3800,
+        rent_is_exact=False,
+        rent_min=3200,
+        rent_max=4500,
+    )
+    req = _requirements()
+    context = SimpleNamespace(
+        state={
+            agent_module._REQUIREMENTS_STATE_KEY: agent_module._requirements_to_dict(req),
+            agent_module._CANDIDATES_STATE_KEY: [
+                {"listing": row.to_dict(), "current_search_rank": 1}
+            ],
+            agent_module._VERIFIED_STATE_KEY: {},
+        }
+    )
+
+    result = compare_candidates("#1", verify_missing=False, tool_context=context)
+    legacy = result["candidates"][0]
+    canonical = result["results"][0]
+
+    assert legacy["hard_constraint_status"] == "unknown"
+    assert legacy["satisfies_current_requirements"] is None
+    assert canonical["hardConstraintStatus"] == "unknown"
+    assert canonical["satisfiesCurrentRequirements"] is None
+    assert legacy["decision_ready"] is False

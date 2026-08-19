@@ -1671,8 +1671,6 @@ def _comparison_candidate(
         dict.fromkeys([*critical_unknown, *critical_query_backed])
     )
     decision_unknowns = list(comparison_unknowns)
-    passes = passes_hard_filters(listing, req, commute) if req is not None else None
-
     rank_value = candidate.get("current_search_rank")
     current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else None
     pricing = canonical["pricing"]
@@ -1696,41 +1694,13 @@ def _comparison_candidate(
         if req.max_bathrooms is not None and "property.bathrooms" in query_backed:
             required_query_backed.append("property.bathrooms")
     required_query_backed = list(dict.fromkeys(required_query_backed))
-    authoritative_passes = passes
-    if req is not None and required_query_backed:
-        neutral = listing.to_dict()
-        if "policies.petsAllowed" in required_query_backed:
-            neutral["pets_allowed"] = True
-        if "policies.parkingAvailable" in required_query_backed:
-            neutral["parking_available"] = True
-        if "property.bathrooms" in required_query_backed:
-            neutral_bathrooms = (
-                req.min_bathrooms
-                if req.min_bathrooms is not None
-                else req.max_bathrooms
-            )
-            neutral["bathrooms"] = neutral_bathrooms
-            neutral["bathrooms_min_evidence"] = None
-        elif "property.bathroomsMinEvidence" in required_query_backed:
-            neutral["bathrooms"] = None
-            neutral["bathrooms_min_evidence"] = req.min_bathrooms
-        authoritative_passes = passes_hard_filters(
-            _listing_from_dict(neutral), req, commute
-        )
+    hard_constraint_status, satisfies_current_requirements = (
+        _canonical_hard_constraint_result(canonical, req, commute)
+    )
     comparison_ready = bool(completeness["comparisonReady"])
-    decision_ready = bool(completeness["decisionReady"]) and passes is not False
-    if authoritative_passes is None:
-        hard_constraint_status = "not_evaluated"
-        satisfies_current_requirements = None
-    elif not authoritative_passes:
-        hard_constraint_status = "fail"
-        satisfies_current_requirements = False
-    elif required_query_backed:
-        hard_constraint_status = "evidence_only"
-        satisfies_current_requirements = None
-    else:
-        hard_constraint_status = "pass"
-        satisfies_current_requirements = True
+    decision_ready = (
+        bool(completeness["decisionReady"]) and hard_constraint_status == "pass"
+    )
 
     return {
         "listing_id": listing.id,
