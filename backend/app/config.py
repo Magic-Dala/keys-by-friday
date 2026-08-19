@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 AgentMode = Literal["adk", "stub"]
 AppEnvironment = Literal["local", "test", "production"]
 AuthMode = Literal["disabled", "firebase"]
+PersistenceMode = Literal["memory", "firestore"]
 
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
@@ -25,6 +26,9 @@ class Settings:
     google_cloud_project: str | None = None
     auth_mode: AuthMode = "disabled"
     firebase_project_id: str | None = None
+    persistence_mode: PersistenceMode = "memory"
+    firestore_project_id: str | None = None
+    firestore_database_id: str = "(default)"
 
 
 def _agent_mode(value: str) -> AgentMode:
@@ -46,6 +50,13 @@ def _auth_mode(value: str) -> AuthMode:
     if normalized not in {"disabled", "firebase"}:
         raise ValueError("AUTH_MODE must be 'disabled' or 'firebase'.")
     return cast(AuthMode, normalized)
+
+
+def _persistence_mode(value: str) -> PersistenceMode:
+    normalized = value.strip().lower()
+    if normalized not in {"memory", "firestore"}:
+        raise ValueError("PERSISTENCE_MODE must be 'memory' or 'firestore'.")
+    return cast(PersistenceMode, normalized)
 
 
 def _positive_seconds(value: str) -> float:
@@ -73,6 +84,10 @@ def _log_level(value: str) -> str:
 def get_settings() -> Settings:
     load_dotenv()
     google_cloud_project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or None
+    firebase_project_id = (
+        os.getenv("FIREBASE_PROJECT_ID", "").strip()
+        or google_cloud_project
+    )
     return Settings(
         agent_mode=_agent_mode(os.getenv("AGENT_MODE", "adk")),
         frontend_origin=os.getenv(
@@ -86,8 +101,16 @@ def get_settings() -> Settings:
         log_level=_log_level(os.getenv("LOG_LEVEL", "INFO")),
         google_cloud_project=google_cloud_project,
         auth_mode=_auth_mode(os.getenv("AUTH_MODE", "disabled")),
-        firebase_project_id=(
-            os.getenv("FIREBASE_PROJECT_ID", "").strip()
-            or google_cloud_project
+        firebase_project_id=firebase_project_id,
+        persistence_mode=_persistence_mode(
+            os.getenv("PERSISTENCE_MODE", "memory")
+        ),
+        firestore_project_id=(
+            os.getenv("FIRESTORE_PROJECT_ID", "").strip()
+            or firebase_project_id
+        ),
+        firestore_database_id=(
+            os.getenv("FIRESTORE_DATABASE_ID", "(default)").strip()
+            or "(default)"
         ),
     )

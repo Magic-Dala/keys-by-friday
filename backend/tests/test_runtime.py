@@ -79,6 +79,7 @@ def test_readiness_is_ready_in_stub_mode(monkeypatch: pytest.MonkeyPatch) -> Non
         "checks": {
             "api": "ok",
             "auth": "disabled",
+            "persistence": "memory",
             "agent": "stub",
             "provider": "not_required",
         },
@@ -126,6 +127,8 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
                 app_environment="production",
                 auth_mode="firebase",
                 firebase_project_id="test-project",
+                persistence_mode="firestore",
+                firestore_project_id="test-project",
             )
         )
     )
@@ -136,6 +139,7 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
     assert response.json()["status"] == "ready"
     assert response.json()["checks"]["agent"] == "configured"
     assert response.json()["checks"]["provider"] == "configured"
+    assert response.json()["checks"]["persistence"] == "configured"
 
 
 def test_production_readiness_rejects_stub_and_mock(
@@ -149,6 +153,8 @@ def test_production_readiness_rejects_stub_and_mock(
                 app_environment="production",
                 auth_mode="firebase",
                 firebase_project_id="test-project",
+                persistence_mode="firestore",
+                firestore_project_id="test-project",
             )
         )
     )
@@ -173,6 +179,8 @@ def test_production_readiness_rejects_mock_with_configured_adk(
                 app_environment="production",
                 auth_mode="firebase",
                 firebase_project_id="test-project",
+                persistence_mode="firestore",
+                firestore_project_id="test-project",
             )
         )
     )
@@ -182,6 +190,31 @@ def test_production_readiness_rejects_mock_with_configured_adk(
     assert response.status_code == 503
     assert response.json()["checks"]["agent"] == "configured"
     assert response.json()["checks"]["provider"] == "mock_not_allowed"
+
+
+def test_production_readiness_requires_firestore_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
+    monkeypatch.setenv("LISTING_PROVIDER", "realtyapi")
+    monkeypatch.setenv("REALTYAPI_API_KEY", "test-realty-key")
+    client = TestClient(
+        create_app(
+            Settings(
+                agent_mode="adk",
+                app_environment="production",
+                auth_mode="firebase",
+                firebase_project_id="test-project",
+                persistence_mode="memory",
+            )
+        )
+    )
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["persistence"] == "memory_not_allowed"
 
 
 def test_agent_timeout_becomes_stable_service_error(

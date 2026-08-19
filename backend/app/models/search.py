@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -118,3 +119,27 @@ class SearchResponse(BaseModel):
     commuteEvaluation: CommuteEvaluationResponse | None = None
     route: RouteDetailResponse | None = None
     mode: Literal["adk", "stub"]
+
+
+class SaveShortlistRequest(BaseModel):
+    listingId: str = Field(min_length=1, max_length=256)
+    conversationId: str = Field(min_length=1, max_length=128)
+
+    @field_validator("listingId", "conversationId")
+    @classmethod
+    def normalize_shortlist_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+
+class ShortlistItemResponse(BaseModel):
+    listing: ListingResponse
+    sourceConversationId: str
+    savedAt: datetime
+    updatedAt: datetime
+
+
+class ShortlistResponse(BaseModel):
+    items: list[ShortlistItemResponse] = Field(default_factory=list)

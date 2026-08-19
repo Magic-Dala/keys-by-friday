@@ -25,10 +25,11 @@ route. A different user receives HTTP `403 Forbidden` from either endpoint.
 
 ## Important MVP boundary
 
-Authentication is now ready, but conversation ownership is still stored in the
-backend process's memory. A Cloud Run restart or scale-to-zero event clears it,
-just as it currently clears the in-memory ADK sessions. Firestore persistence is
-a later milestone.
+Milestone 3 now stores conversation ownership and metadata in Firestore when
+`PERSISTENCE_MODE=firestore`. The full ADK conversation session is still held in
+the backend process, so a Cloud Run restart can preserve ownership/shortlists
+without preserving every earlier conversational refinement. See
+`docs/firestore.md` for that boundary.
 
 Anonymous identity is also tied to the browser's local Firebase data. Clearing
 browser storage, using a different browser, or using another device creates a

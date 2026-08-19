@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The browser never reads or writes Firestore directly. FastAPI uses the
+    // server SDK and a Cloud Run service account, which are governed by IAM.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

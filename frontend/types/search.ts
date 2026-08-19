@@ -78,3 +78,14 @@ export interface SearchResponse {
   route?: RouteDetail;
   mode: AgentMode;
 }
+
+export interface ShortlistItem {
+  listing: Listing;
+  sourceConversationId: string;
+  savedAt: string;
+  updatedAt: string;
+}
+
+export interface ShortlistResponse {
+  items: ShortlistItem[];
+}

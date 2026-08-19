@@ -116,6 +116,11 @@ Start with the smallest persistence scope justified by the product demo. Do not 
 
 The user can save, list, remove, and compare shortlisted properties without losing the original listing identity or verification evidence.
 
+Current implementation note: FastAPI now provides authenticated save/list/remove
+routes backed by repository interfaces and Firestore, and saved snapshots retain
+available coordinate/commute evidence. Notes, user-authored reasons, and full ADK
+session restoration remain future refinements.
+
 ---
 
 ## P5 — Commute Intelligence

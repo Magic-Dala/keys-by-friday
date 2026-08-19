@@ -325,6 +325,9 @@ The full command is in `docs/deployment.md`.
 - Places API is not enabled by this integration.
 - Natural-language destination resolution needs a live smoke test.
 - Commute state is held in the current in-memory ADK session.
+- Milestone 3 stores normalized latitude/longitude and commute summaries when a
+  result is saved to a shortlist. It does not store or recalculate Google route
+  results inside the Firestore repository.
 - Routes calls use billable Google Cloud quota; use fake tests for routine CI.
 - Route Matrix billing is per origin/destination element. This project uses one
   destination, so 25 listing origins produce 25 billed matrix elements.
