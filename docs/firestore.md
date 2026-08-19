@@ -189,7 +189,34 @@ The repository also contains `firestore.rules`, which explicitly denies every
 direct client read/write. The backend server SDK is controlled by Google Cloud
 IAM rather than these client rules.
 
-## 3. Configure local environment variables
+## 3. Deploy and verify the deny-all client rules
+
+Creating the database in production mode is not a substitute for deploying the
+versioned rules in this repository. From the repository root, authenticate the
+Firebase CLI and publish the configured rules target:
+
+```bash
+npm install --global firebase-tools
+firebase login
+firebase deploy --only firestore:rules --project 'your-existing-google-cloud-project-id'
+```
+
+The command reads `firebase.json`, compiles `firestore.rules`, and must finish
+with a successful Firestore Rules release. Verify the deployed project in
+**Firebase Console → Firestore Database → Rules** and confirm it contains:
+
+```text
+match /{document=**} {
+  allow read, write: if false;
+}
+```
+
+In the Rules Playground, simulate an unauthenticated `get` of
+`/users/rules-verification`; the expected result is **Denied**. Do not use the
+Python Admin SDK for this verification because server SDK requests use IAM and
+are intentionally not blocked by client Security Rules.
+
+## 4. Configure local environment variables
 
 In the ignored root `.env` file, keep the existing Gemini, RealtyAPI, Firebase,
 and `GOOGLE_MAPS_API_KEY` values. Add:
@@ -213,19 +240,22 @@ gcloud auth application-default login
 Restart the backend after changing `.env` because settings and repository
 factories are cached for the life of the process.
 
-## 4. Run fake-repository tests first
+## 5. Run repository tests first
 
 These tests are fast, do not call Google Cloud, do not write real rental data,
 and do not consume Firestore or Maps quota:
 
 ```bash
-uv run --extra dev --extra backend pytest backend/tests/test_persistence.py -q
+uv run --extra dev --extra backend pytest \
+  backend/tests/test_persistence.py \
+  backend/tests/test_firestore_adapter.py \
+  -q
 ```
 
 Desired output ends with:
 
 ```text
-9 passed
+10 passed
 ```
 
 The test scenarios prove:
@@ -235,7 +265,17 @@ The test scenarios prove:
 - one user cannot claim another user's conversation;
 - one user cannot list another user's shortlist;
 - save/list/delete work through FastAPI;
-- IDs containing `/` are converted to safe Firestore document IDs.
+- IDs containing `/` are converted to safe Firestore document IDs;
+- the production Firestore adapters execute claim → record → save → list →
+  delete through transaction/query-shaped fake client calls; and
+- records remain available after recreating both repository objects over the
+  same backing client.
+
+The bounded fake client avoids cloud credentials and quota while exercising the
+actual `FirestoreConversationRepository` and `FirestoreShortlistRepository`
+methods. It does not replace the deployed rules check above or the real
+Firestore UI smoke test below, which cover project configuration, IAM, and
+network access.
 
 Run the complete suite:
 
@@ -248,7 +288,7 @@ npm run check
 cd ..
 ```
 
-## 5. Check readiness
+## 6. Check readiness
 
 Start the application:
 
@@ -271,7 +311,7 @@ With Firestore configured, look for:
 Readiness checks configuration only. The real save/load test below proves that
 credentials, IAM, database location, and network access actually work.
 
-## 6. Test real Firestore through the UI
+## 7. Test real Firestore through the UI
 
 Open <http://localhost:3000> and search for rentals. For Maps coverage, use a
 complete commute request such as:
@@ -299,7 +339,7 @@ DELETE /api/shortlist/<listing-id>    → 204
 
 Every request should include `Authorization: Bearer ...`.
 
-## 7. Inspect the stored data
+## 8. Inspect the stored data
 
 In Firebase Console → Firestore Database → Data, expect:
 
@@ -318,7 +358,7 @@ document's `listingSnapshot`.
 Do not expect raw prompts, API keys, complete provider payloads, or an encoded
 route polyline.
 
-## 8. Optional local Firestore emulator
+## 9. Optional local Firestore emulator
 
 The automated test suite uses fake repositories, so installing the emulator is
 optional. If you want to inspect Firestore locally without writing cloud data:
@@ -346,7 +386,7 @@ automatically honors `FIRESTORE_EMULATOR_HOST`.
 The emulator usually requires a supported Java runtime. Skip this optional step
 if the fake tests and real Firebase smoke test are sufficient.
 
-## 9. Cloud Run permissions and deployment
+## 10. Cloud Run permissions and deployment
 
 The Cloud Run service account needs Firestore application read/write access:
 

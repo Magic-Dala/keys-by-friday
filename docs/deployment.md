@@ -212,6 +212,34 @@ URL in `--set-env-vars`, source control, screenshots, or chat. Detailed macOS,
 local SQLite, Cloud SQL, and restart instructions are in
 `docs/adk-sessions.md`.
 
+## Deploy and verify Firestore client rules
+
+The committed `firestore.rules` file denies every direct browser/mobile read and
+write. Deploy it explicitly before the Cloud Run revision so the Firebase
+project enforces the same boundary as the repository:
+
+```bash
+npm install --global firebase-tools
+firebase login
+firebase deploy --only firestore:rules --project "$KBF_PROJECT_ID"
+```
+
+The deploy must finish with a successful Firestore Rules release. Then open
+**Firebase Console → Firestore Database → Rules** for `KBF_PROJECT_ID` and
+confirm the published rule contains:
+
+```text
+match /{document=**} {
+  allow read, write: if false;
+}
+```
+
+Use the Rules Playground on that page with an unauthenticated `get` request to
+`/users/rules-verification`; the expected result is **Denied**. This verifies
+the deployed client boundary, not merely the checked-in file. The Python Admin
+SDK still reaches Firestore through the Cloud Run service account and IAM, so
+this deny-all client rule does not block FastAPI.
+
 ## Store external API keys in Secret Manager
 
 Read each key without showing it in the Terminal, create the secret, and clear
@@ -307,6 +335,12 @@ gcloud run services remove-iam-policy-binding "$KBF_SERVICE" \
 This command bills Gemini usage to Vertex AI in `KBF_PROJECT_ID`. It does not
 use Google AI Studio or a Gemini API key. Routes usage is billed to the same
 project through the separate server-side Maps key.
+
+The deployment intentionally does not set `GEMINI_SEARCH_MODEL` or
+`GEMINI_MODELS`. The Rental Agent owns model selection and fallback policy.
+When coordinating with the Agent-owned routing work, preserve the Firestore
+variables in this command: `PERSISTENCE_MODE`, `FIRESTORE_PROJECT_ID`, and
+`FIRESTORE_DATABASE_ID`.
 
 `GOOGLE_MAPS_API_KEY` is optional to the ordinary rental-search flow, but it is
 required for live commute summaries and selected-route geometry. Restrict this
