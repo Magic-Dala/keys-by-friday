@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
+from datetime import datetime
 import os
 import re
 from typing import Any, Optional
@@ -46,6 +47,8 @@ _CACHE_FAILED_SOURCES_STATE_KEY = "rental_search_cache_failed_sources"
 _VERIFIED_STATE_KEY = "rental_verified_details"
 _COMPARISON_LIMIT = 4
 _ACTIVITY_SCHEMA = "rental.agent_activity.v1"
+_CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
+_CANONICAL_COMPARISON_SCHEMA = "kbf.canonical-comparison.v1"
 
 
 def _agent_activity(
@@ -241,6 +244,121 @@ def _try_listing_from_dict(value: object) -> Listing | None:
         return _listing_from_dict(value)
     except (TypeError, ValueError):
         return None
+
+
+def _canonical_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _listing_from_canonical_v1(value: dict[str, Any]) -> Listing:
+    """Restore the frozen canonical listing contract without inventing facts."""
+    if value.get("schemaVersion") != _CANONICAL_LISTING_SCHEMA:
+        raise ValueError(f"Expected {_CANONICAL_LISTING_SCHEMA} input.")
+
+    def section(name: str) -> dict[str, Any]:
+        current = value.get(name)
+        return current if isinstance(current, dict) else {}
+
+    identity = section("identity")
+    identifier = identity.get("id")
+    if not isinstance(identifier, str) or not identifier.strip():
+        raise ValueError("Canonical listing identity.id is required.")
+
+    location = section("location")
+    pricing = section("pricing")
+    property_data = section("property")
+    availability = section("availability")
+    policies = section("policies")
+    features = section("features")
+    media = section("media")
+    contact = section("contact")
+    source = section("source")
+    evidence = section("evidence")
+
+    query_backed_paths = evidence.get("queryBackedFields")
+    query_backed = query_backed_paths if isinstance(query_backed_paths, list) else []
+    query_backed_reverse = {
+        "property.bathrooms": "bathrooms",
+        "property.bathroomsMinEvidence": "bathrooms_min_evidence",
+        "policies.petsAllowed": "pets_allowed",
+        "policies.parkingAvailable": "parking_available",
+    }
+
+    rent = pricing.get("rent")
+    rent_min = pricing.get("rentMin")
+    rent_max = pricing.get("rentMax")
+    bedrooms = property_data.get("bedrooms")
+    bedrooms_min = property_data.get("bedroomsMin")
+    bedrooms_max = property_data.get("bedroomsMax")
+
+    return Listing(
+        id=identifier,
+        address=str(location.get("address") or ""),
+        city=str(location.get("city") or ""),
+        state=str(location.get("state") or ""),
+        zip_code=location.get("zipCode"),
+        rent=rent,
+        bedrooms=bedrooms,
+        bathrooms=property_data.get("bathrooms"),
+        rent_is_exact=(
+            True if rent is not None else False if rent_min is not None or rent_max is not None else None
+        ),
+        bedrooms_is_exact=(
+            True
+            if bedrooms is not None
+            else False
+            if bedrooms_min is not None or bedrooms_max is not None
+            else None
+        ),
+        source_listing_id=identity.get("sourceListingId"),
+        country_code=location.get("countryCode"),
+        latitude=location.get("latitude"),
+        longitude=location.get("longitude"),
+        primary_image_url=media.get("primaryImageUrl"),
+        rent_min=rent_min,
+        rent_max=rent_max,
+        bedrooms_min=bedrooms_min,
+        bedrooms_max=bedrooms_max,
+        days_on_market=availability.get("daysOnMarket"),
+        property_type=property_data.get("propertyType"),
+        square_footage=property_data.get("squareFootage"),
+        status=availability.get("status"),
+        listed_date=_canonical_datetime(availability.get("listedAt")),
+        last_seen_date=_canonical_datetime(availability.get("lastSeenAt")),
+        pets_allowed=policies.get("petsAllowed"),
+        parking_available=policies.get("parkingAvailable"),
+        source_url=source.get("url"),
+        source=str(source.get("provider") or "unknown"),
+        property_name=identity.get("propertyName"),
+        availability=availability.get("availabilityText"),
+        year_built=property_data.get("yearBuilt"),
+        amenities=tuple(str(item) for item in (features.get("amenities") or [])),
+        pet_policy=policies.get("petPolicy"),
+        parking_policy=policies.get("parkingPolicy"),
+        detail_verified=bool(evidence.get("detailVerified", False)),
+        bathrooms_min_evidence=property_data.get("bathroomsMinEvidence"),
+        phone=contact.get("phone"),
+        rating=property_data.get("rating"),
+        multimedia_url=media.get("multimediaUrl"),
+        virtual_tour_url=media.get("virtualTourUrl"),
+        has_availability=availability.get("hasAvailability"),
+        is_multifamily=property_data.get("isMultifamily"),
+        attachment_count=media.get("attachmentCount"),
+        specialties=tuple(str(item) for item in (features.get("specialties") or [])),
+        property_manager_name=contact.get("propertyManagerName"),
+        property_manager_company_id=contact.get("propertyManagerCompanyId"),
+        has_lead_email=contact.get("hasLeadEmail"),
+        description=property_data.get("description"),
+        rent_deals_count=features.get("rentDealsCount"),
+        query_backed_fields=tuple(
+            query_backed_reverse.get(str(path), str(path)) for path in query_backed
+        ),
+    )
 
 
 def _commute_from_dict(value: object) -> CommuteResult | None:
@@ -1290,6 +1408,251 @@ def _soft_preference_evidence(
     return result
 
 
+def _canonical_hard_constraint_result(
+    canonical: dict[str, Any],
+    req: SearchRequirements | None,
+    commute: CommuteResult | None,
+) -> tuple[str, bool | None]:
+    """Evaluate hard constraints as pass/fail/evidence_only/unknown."""
+    if req is None:
+        return "unknown", None
+
+    def section(name: str) -> dict[str, Any]:
+        current = canonical.get(name)
+        return current if isinstance(current, dict) else {}
+
+    def number(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    outcomes: list[str] = []
+    location = section("location")
+    pricing = section("pricing")
+    property_data = section("property")
+    availability = section("availability")
+    policies = section("policies")
+    evidence = section("evidence")
+    query_backed_value = evidence.get("queryBackedFields")
+    query_backed = {
+        str(item) for item in query_backed_value
+    } if isinstance(query_backed_value, list) else set()
+
+    city = location.get("city")
+    if not isinstance(city, str) or not city.strip():
+        outcomes.append("unknown")
+    elif city.casefold() != req.city.casefold():
+        outcomes.append("fail")
+
+    state = location.get("state")
+    if not isinstance(state, str) or not state.strip():
+        outcomes.append("unknown")
+    elif state.upper() != req.state.upper():
+        outcomes.append("fail")
+
+    listing_status = availability.get("status")
+    if isinstance(listing_status, str) and listing_status.strip():
+        if listing_status.casefold() != "active":
+            outcomes.append("fail")
+
+    if req.max_rent is not None:
+        exact = number(pricing.get("rent"))
+        minimum = number(pricing.get("rentMin"))
+        maximum = number(pricing.get("rentMax"))
+        if exact is not None:
+            outcomes.append("fail" if exact > req.max_rent else "pass")
+        elif minimum is not None and minimum > req.max_rent:
+            outcomes.append("fail")
+        elif maximum is not None and maximum <= req.max_rent:
+            outcomes.append("pass")
+        else:
+            outcomes.append("unknown")
+
+    if req.min_bedrooms is not None:
+        exact = number(property_data.get("bedrooms"))
+        minimum = number(property_data.get("bedroomsMin"))
+        maximum = number(property_data.get("bedroomsMax"))
+        if exact is not None:
+            outcomes.append("fail" if exact < req.min_bedrooms else "pass")
+        elif maximum is not None and maximum < req.min_bedrooms:
+            outcomes.append("fail")
+        elif minimum is not None and minimum >= req.min_bedrooms:
+            outcomes.append("pass")
+        else:
+            outcomes.append("unknown")
+
+    if req.max_bedrooms is not None:
+        exact = number(property_data.get("bedrooms"))
+        minimum = number(property_data.get("bedroomsMin"))
+        maximum = number(property_data.get("bedroomsMax"))
+        if exact is not None:
+            outcomes.append("fail" if exact > req.max_bedrooms else "pass")
+        elif minimum is not None and minimum > req.max_bedrooms:
+            outcomes.append("fail")
+        elif maximum is not None and maximum <= req.max_bedrooms:
+            outcomes.append("pass")
+        else:
+            outcomes.append("unknown")
+
+    if req.min_bathrooms is not None:
+        exact = number(property_data.get("bathrooms"))
+        minimum_evidence = number(property_data.get("bathroomsMinEvidence"))
+        if exact is not None:
+            if "property.bathrooms" in query_backed:
+                outcomes.append("evidence_only")
+            else:
+                outcomes.append("fail" if exact < req.min_bathrooms else "pass")
+        elif minimum_evidence is not None:
+            if minimum_evidence < req.min_bathrooms:
+                outcomes.append("unknown")
+            elif "property.bathroomsMinEvidence" in query_backed:
+                outcomes.append("evidence_only")
+            else:
+                outcomes.append("pass")
+        else:
+            outcomes.append("unknown")
+
+    if req.max_bathrooms is not None:
+        exact = number(property_data.get("bathrooms"))
+        if exact is None:
+            outcomes.append("unknown")
+        elif "property.bathrooms" in query_backed:
+            outcomes.append("evidence_only")
+        else:
+            outcomes.append("fail" if exact > req.max_bathrooms else "pass")
+
+    if req.pets_required:
+        pets = policies.get("petsAllowed")
+        if pets is None:
+            outcomes.append("unknown")
+        elif "policies.petsAllowed" in query_backed:
+            outcomes.append("evidence_only")
+        else:
+            outcomes.append("pass" if pets is True else "fail")
+
+    if req.parking_required:
+        parking = policies.get("parkingAvailable")
+        if parking is None:
+            outcomes.append("unknown")
+        elif "policies.parkingAvailable" in query_backed:
+            outcomes.append("evidence_only")
+        else:
+            outcomes.append("pass" if parking is True else "fail")
+
+    if req.max_commute_minutes is not None:
+        if (
+            commute is None
+            or commute.status != "available"
+            or commute.duration_minutes is None
+        ):
+            outcomes.append("unknown")
+        else:
+            outcomes.append(
+                "fail"
+                if commute.duration_minutes > req.max_commute_minutes
+                else "pass"
+            )
+
+    if "fail" in outcomes:
+        return "fail", False
+    if "unknown" in outcomes:
+        return "unknown", None
+    if "evidence_only" in outcomes:
+        return "evidence_only", None
+    return "pass", True
+
+
+def _canonical_comparison_result(
+    canonical: dict[str, Any],
+    req: SearchRequirements | None,
+    commute: CommuteResult | None,
+) -> dict[str, object]:
+    listing = _listing_from_canonical_v1(canonical)
+    completeness_value = canonical.get("completeness")
+    completeness = completeness_value if isinstance(completeness_value, dict) else {}
+    evidence_value = canonical.get("evidence")
+    evidence = evidence_value if isinstance(evidence_value, dict) else {}
+
+    critical_unknown_value = completeness.get("criticalUnknownFields")
+    critical_unknown = (
+        [str(item) for item in critical_unknown_value]
+        if isinstance(critical_unknown_value, list)
+        else []
+    )
+    critical_query_value = evidence.get("criticalQueryBackedFields")
+    critical_query_backed = (
+        [str(item) for item in critical_query_value]
+        if isinstance(critical_query_value, list)
+        else []
+    )
+    comparison_unknowns = list(
+        dict.fromkeys([*critical_unknown, *critical_query_backed])
+    )
+    hard_status, satisfies = _canonical_hard_constraint_result(canonical, req, commute)
+
+    policies_value = canonical.get("policies")
+    policies = policies_value if isinstance(policies_value, dict) else {}
+    tradeoffs: list[str] = []
+    if req is not None and not req.pets_required and policies.get("petsAllowed") is None:
+        tradeoffs.append("pet policy not provided by source")
+    if req is not None and not req.parking_required and policies.get("parkingAvailable") is None:
+        tradeoffs.append("parking not provided by source")
+
+    return {
+        "listingId": listing.id,
+        "hardConstraintStatus": hard_status,
+        "satisfiesCurrentRequirements": satisfies,
+        "softPreferenceEvidence": _soft_preference_evidence(
+            listing, req.soft_preferences if req is not None else ()
+        ),
+        "tradeoffs": tradeoffs,
+        "comparisonUnknowns": comparison_unknowns,
+        "decisionUnknowns": list(comparison_unknowns),
+        "decisionReady": bool(completeness.get("decisionReady")) and hard_status == "pass",
+        "score": None,
+        "rank": None,
+    }
+
+
+def compare_canonical_listings(
+    canonical_listings: list[dict[str, Any]],
+    requirements: SearchRequirements | dict[str, Any] | None = None,
+    *,
+    commutes: dict[str, CommuteResult | dict[str, Any]] | None = None,
+) -> dict[str, object]:
+    """Compare restored canonical listings without ADK, backend, or provider coupling."""
+    if isinstance(requirements, SearchRequirements):
+        req = requirements
+    elif requirements is None:
+        req = None
+    else:
+        req = _requirements_from_dict(requirements)
+
+    commute_values = commutes or {}
+    listing_ids: list[str] = []
+    results: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for canonical in canonical_listings:
+        listing = _listing_from_canonical_v1(canonical)
+        if listing.id in seen:
+            continue
+        seen.add(listing.id)
+        commute_value = commute_values.get(listing.id)
+        commute = (
+            commute_value
+            if isinstance(commute_value, CommuteResult)
+            else _commute_from_dict(commute_value)
+        )
+        listing_ids.append(listing.id)
+        results.append(_canonical_comparison_result(canonical, req, commute))
+
+    return {
+        "schemaVersion": _CANONICAL_COMPARISON_SCHEMA,
+        "listingIds": listing_ids,
+        "results": results,
+    }
+
+
 def _comparison_candidate(
     *,
     candidate: dict[str, Any],
@@ -1485,6 +1848,8 @@ def compare_candidates(
         selected.append((identifier, candidate))
 
     comparisons: list[dict[str, object]] = []
+    canonical_inputs: list[dict[str, Any]] = []
+    canonical_commutes: dict[str, CommuteResult] = {}
     resolved_requested: list[str] = []
     invalid: list[str] = []
     verification_attempted_count = 0
@@ -1524,6 +1889,9 @@ def compare_candidates(
             invalid.append(identifier)
             continue
         commute = _commute_from_dict(candidate.get("commute"))
+        canonical_inputs.append(listing.to_backend_dict())
+        if commute is not None:
+            canonical_commutes[listing.id] = commute
         comparisons.append(
             _comparison_candidate(
                 candidate=candidate,
@@ -1576,8 +1944,14 @@ def compare_candidates(
             else "completed"
         )
     )
+    canonical_comparison = compare_canonical_listings(
+        canonical_inputs,
+        req,
+        commutes=canonical_commutes,
+    )
 
     return {
+        **canonical_comparison,
         "activity": _agent_activity(
             operation="compare_candidates",
             stage="candidate_comparison",
