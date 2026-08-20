@@ -6,6 +6,7 @@ from backend.app.main import create_app
 from backend.app.services.agent_service import (
     AgentService,
     AgentServiceError,
+    _comparison_from_tool_payload,
     _commute_evaluation_from_tool_payload,
     _normalize_tool_listings,
     _route_from_tool_payload,
@@ -157,7 +158,6 @@ def test_normalize_commute_and_selected_route_contract() -> None:
     assert evaluation.evaluatedCount == 3
     assert evaluation.withinLimitCount == 1
     assert evaluation.overLimitCount == 1
-
     unavailable = _commute_evaluation_from_tool_payload(
         {
             "status": "unavailable",
@@ -188,6 +188,49 @@ def test_normalize_commute_and_selected_route_contract() -> None:
     assert route is not None
     assert route.listingId == "listing-1"
     assert route.encodedPolyline == "abc123"
+
+
+def test_normalize_canonical_comparison_contract() -> None:
+    comparison = _comparison_from_tool_payload(
+        {
+            "schemaVersion": "kbf.canonical-comparison.v1",
+            "listingIds": ["listing-1", "listing-2"],
+            "results": [
+                {
+                    "listingId": "listing-1",
+                    "hardConstraintStatus": "fail",
+                    "satisfiesCurrentRequirements": False,
+                    "softPreferenceEvidence": [],
+                    "tradeoffs": ["parking unavailable"],
+                    "comparisonUnknowns": [],
+                    "decisionUnknowns": [],
+                    "decisionReady": True,
+                    "score": None,
+                    "rank": 1,
+                },
+                {
+                    "listingId": "listing-2",
+                    "hardConstraintStatus": "pass",
+                    "satisfiesCurrentRequirements": True,
+                    "softPreferenceEvidence": [],
+                    "tradeoffs": [],
+                    "comparisonUnknowns": ["policies.petsAllowed"],
+                    "decisionUnknowns": ["policies.petsAllowed"],
+                    "decisionReady": False,
+                    "score": None,
+                    "rank": 2,
+                },
+            ],
+            "candidates": [{"internal": "ignored by API contract"}],
+        }
+    )
+
+    assert comparison is not None
+    assert comparison.schemaVersion == "kbf.canonical-comparison.v1"
+    assert comparison.listingIds == ["listing-1", "listing-2"]
+    assert comparison.results[0].hardConstraintStatus == "fail"
+    assert comparison.results[1].comparisonUnknowns == ["policies.petsAllowed"]
+    assert _comparison_from_tool_payload({"schemaVersion": "wrong"}) is None
 
 
 def test_normalize_preserves_grouped_source_postings_for_web_contract() -> None:

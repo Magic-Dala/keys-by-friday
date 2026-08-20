@@ -27,6 +27,9 @@ def test_agent_output_contract_requires_compact_grouped_lists():
     assert "Do not print `Unknown`" in instruction
     assert "internal IDs" in instruction
     assert "Do NOT automatically call get_listing_details" in instruction
+    assert '"2 bedroom", "2-bedroom", "2 bed"' in instruction
+    assert "same value as both the minimum and" in instruction
+    assert '"2B2B" means minimum 2 bedrooms' in instruction
 
 
 def test_mock_tool_path_works_without_external_keys(monkeypatch):
