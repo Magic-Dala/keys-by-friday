@@ -1018,6 +1018,10 @@ class AgentService:
             raise AgentServiceError(
                 "ADK agent completed without structured comparison data"
             )
+        if response.comparison.listingIds != listing_ids:
+            raise AgentServiceError(
+                "ADK agent returned a different listing selection"
+            )
         return response
 
     async def get_selected_route(

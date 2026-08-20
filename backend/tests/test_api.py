@@ -1,6 +1,7 @@
 import asyncio
 
 from fastapi.testclient import TestClient
+import pytest
 
 from backend.app.auth import AuthenticatedUser, get_current_user
 from backend.app.config import Settings
@@ -638,3 +639,48 @@ def test_comparison_prompt_keeps_listing_ids_out_of_user_facing_copy() -> None:
     )
     assert response.comparison is not None
     assert response.comparison.listingIds == ["74pt6lx", "v0c38pe"]
+
+
+@pytest.mark.parametrize(
+    "returned_ids",
+    [
+        ["one"],
+        ["two", "one"],
+    ],
+    ids=["missing-listing", "reordered-listings"],
+)
+def test_comparison_rejects_a_changed_listing_selection(
+    returned_ids: list[str],
+) -> None:
+    service = AgentService(mode="stub")
+
+    async def fake_send_message(
+        message: str,
+        conversation_id: str | None = None,
+        *,
+        user_id: str,
+    ) -> SearchResponse:
+        return SearchResponse(
+            conversationId=conversation_id or "conversation-1",
+            message="Comparison explanation.",
+            comparison={
+                "schemaVersion": "kbf.canonical-comparison.v1",
+                "listingIds": returned_ids,
+                "results": [],
+            },
+            mode="stub",
+        )
+
+    service.send_message = fake_send_message  # type: ignore[method-assign]
+
+    with pytest.raises(
+        AgentServiceError,
+        match="different listing selection",
+    ):
+        asyncio.run(
+            service.compare_listings(
+                ["one", "two"],
+                "conversation-1",
+                user_id="user-1",
+            )
+        )

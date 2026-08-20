@@ -1396,8 +1396,6 @@ def _soft_preference_evidence(
                 if amenity.strip()
             }
             installed_laundry_names = {
-                "washer/dryer",
-                "washer and dryer",
                 "in-unit washer/dryer",
                 "in unit washer/dryer",
                 "in-unit laundry",
@@ -1420,6 +1418,30 @@ def _soft_preference_evidence(
                         "status": "supported",
                         "evidence": [
                             {"field": "amenities", "match": installed_laundry}
+                        ],
+                    }
+                )
+                continue
+
+            ambiguous_laundry_names = {
+                "washer/dryer",
+                "washer and dryer",
+            }
+            ambiguous_laundry = next(
+                (
+                    original
+                    for folded, original in amenities.items()
+                    if folded in ambiguous_laundry_names
+                ),
+                None,
+            )
+            if ambiguous_laundry is not None:
+                result.append(
+                    {
+                        "preference": preference,
+                        "status": "evidence_only",
+                        "evidence": [
+                            {"field": "amenities", "match": ambiguous_laundry}
                         ],
                     }
                 )
