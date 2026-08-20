@@ -1,7 +1,11 @@
 import httpx
 
 from rental_agent.models import SearchRequirements
-from rental_agent.providers.realtyapi import REALTYAPI_BASE_URL, RealtyApiProvider
+from rental_agent.providers.realtyapi import (
+    REALTYAPI_BASE_URL,
+    RealtyApiProvider,
+    normalize_realtyapi_listing,
+)
 
 
 def test_realtyapi_search_request_construction_auth_and_live_shape_normalization():
@@ -165,6 +169,25 @@ def test_explicit_apartments_url_is_preserved():
     result = provider.search(SearchRequirements(city="Mountain View", state="CA"))[0]
 
     assert result.source_url == "https://www.apartments.com/example/abc123/"
+
+
+def test_dict_bed_range_preserves_zero_lower_bound():
+    listing = normalize_realtyapi_listing(
+        {
+            "listingKey": "studio-range",
+            "oneLineAddress": "1 Main St, Mountain View, CA 94040",
+            "address": {
+                "city": "Mountain View",
+                "state": "CA",
+                "postalCode": "94040",
+            },
+            "bedRange": {"min": 0, "max": 2},
+        }
+    )
+
+    assert listing.bedrooms == 2
+    assert listing.bedrooms_min == 0
+    assert listing.bedrooms_max == 2
 
 
 def test_non_integer_bath_constraint_stays_deterministic_locally():
