@@ -255,6 +255,57 @@ def test_zillow_search_unwraps_live_property_envelope_and_uses_unit_evidence():
     assert "bathrooms_min_evidence" in listing.query_backed_fields
 
 
+def test_zillow_equal_price_prefers_zero_bedroom_studio():
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "searchResults": [
+                    {
+                        "resultType": "building",
+                        "property": {
+                            "zpid": 461662544,
+                            "address": {
+                                "streetAddress": "1 Main St",
+                                "city": "Mountain View",
+                                "state": "CA",
+                                "zipcode": "94040",
+                            },
+                            "unitsGroup": [
+                                {"bedrooms": 0, "minPrice": 2000},
+                                {"bedrooms": 1, "minPrice": 2000},
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    requirements = SearchRequirements(
+        city="Mountain View",
+        state="CA",
+        max_rent=2500,
+        min_bedrooms=0,
+        max_bedrooms=1,
+        limit=5,
+    )
+
+    results = provider.search(requirements)
+
+    assert len(results) == 1
+    listing = results[0]
+    assert listing.bedrooms == 0
+    assert listing.bedrooms_min == 0
+    assert listing.bedrooms_max == 0
+
+
 def test_explicit_provider_policy_is_not_overwritten_by_query_evidence():
     def apartments_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"searchResults": []})
