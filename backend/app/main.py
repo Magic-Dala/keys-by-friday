@@ -1,8 +1,11 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.app.api.routes import router
+from backend.app.adk_runtime import AdkSessionReadinessProbe
 from backend.app.config import Settings, get_settings
 from backend.app.observability import configure_logging, install_request_logging
 from backend.app.readiness import readiness_report
@@ -12,7 +15,31 @@ from backend.app.repositories.base import RepositoryUnavailableError
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    app = FastAPI(title="Keys by Friday API", version="0.1.0")
+    session_probe: AdkSessionReadinessProbe | None = None
+    database_url = settings.adk_session_database_url
+    production_sqlite = bool(
+        settings.app_environment == "production"
+        and database_url
+        and database_url.casefold().startswith("sqlite")
+    )
+    if (
+        settings.adk_session_mode == "database"
+        and database_url
+        and not production_sqlite
+    ):
+        session_probe = AdkSessionReadinessProbe(database_url)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        try:
+            yield
+        finally:
+            if session_probe is not None:
+                await session_probe.close()
+
+    app = FastAPI(
+        title="Keys by Friday API", version="0.1.0", lifespan=lifespan
+    )
     app.state.settings = settings
     app.add_middleware(
         CORSMiddleware,
@@ -42,7 +69,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/ready", tags=["system"])
     async def ready(response: Response) -> dict[str, object]:
-        is_ready, checks = readiness_report(settings)
+        session_connected = (
+            await session_probe.check() if session_probe is not None else None
+        )
+        is_ready, checks = readiness_report(
+            settings, adk_session_connected=session_connected
+        )
         if not is_ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {

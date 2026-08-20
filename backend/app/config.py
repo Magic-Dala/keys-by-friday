@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Literal, cast
 
@@ -12,6 +12,7 @@ AgentMode = Literal["adk", "stub"]
 AppEnvironment = Literal["local", "test", "production"]
 AuthMode = Literal["disabled", "firebase"]
 PersistenceMode = Literal["memory", "firestore"]
+AdkSessionMode = Literal["memory", "database"]
 
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
@@ -29,6 +30,8 @@ class Settings:
     persistence_mode: PersistenceMode = "memory"
     firestore_project_id: str | None = None
     firestore_database_id: str = "(default)"
+    adk_session_mode: AdkSessionMode = "memory"
+    adk_session_database_url: str | None = field(default=None, repr=False)
 
 
 def _agent_mode(value: str) -> AgentMode:
@@ -57,6 +60,13 @@ def _persistence_mode(value: str) -> PersistenceMode:
     if normalized not in {"memory", "firestore"}:
         raise ValueError("PERSISTENCE_MODE must be 'memory' or 'firestore'.")
     return cast(PersistenceMode, normalized)
+
+
+def _adk_session_mode(value: str) -> AdkSessionMode:
+    normalized = value.strip().lower()
+    if normalized not in {"memory", "database"}:
+        raise ValueError("ADK_SESSION_MODE must be 'memory' or 'database'.")
+    return cast(AdkSessionMode, normalized)
 
 
 def _positive_seconds(value: str) -> float:
@@ -112,5 +122,11 @@ def get_settings() -> Settings:
         firestore_database_id=(
             os.getenv("FIRESTORE_DATABASE_ID", "(default)").strip()
             or "(default)"
+        ),
+        adk_session_mode=_adk_session_mode(
+            os.getenv("ADK_SESSION_MODE", "memory")
+        ),
+        adk_session_database_url=(
+            os.getenv("ADK_SESSION_DATABASE_URL", "").strip() or None
         ),
     )

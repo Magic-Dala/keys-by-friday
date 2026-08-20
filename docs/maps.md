@@ -324,7 +324,8 @@ The full command is in `docs/deployment.md`.
 - PR #7 added the backend/Agent contract, not a frontend map component.
 - Places API is not enabled by this integration.
 - Natural-language destination resolution needs a live smoke test.
-- Commute state is held in the current in-memory ADK session.
+- Commute state is held in the configured ADK session service. It survives a
+  restart in database mode and remains temporary in local memory mode.
 - Milestone 3 stores normalized latitude/longitude and commute summaries when a
   result is saved to a shortlist. It does not store or recalculate Google route
   results inside the Firestore repository.

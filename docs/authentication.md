@@ -25,11 +25,11 @@ route. A different user receives HTTP `403 Forbidden` from either endpoint.
 
 ## Important MVP boundary
 
-Milestone 3 now stores conversation ownership and metadata in Firestore when
-`PERSISTENCE_MODE=firestore`. The full ADK conversation session is still held in
-the backend process, so a Cloud Run restart can preserve ownership/shortlists
-without preserving every earlier conversational refinement. See
-`docs/firestore.md` for that boundary.
+Milestone 3 stores conversation ownership and metadata in Firestore when
+`PERSISTENCE_MODE=firestore`. Milestone 4 independently stores the full ADK
+conversation in PostgreSQL when `ADK_SESSION_MODE=database`, so a Cloud Run
+restart can preserve both ownership and earlier conversational refinements. See
+`docs/firestore.md` and `docs/adk-sessions.md` for the two storage jobs.
 
 Anonymous identity is also tied to the browser's local Firebase data. Clearing
 browser storage, using a different browser, or using another device creates a
