@@ -1,12 +1,17 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from backend.app.auth import AuthenticatedUser, get_current_user
 from backend.app.config import Settings
 from backend.app.main import create_app
+from backend.app.models.search import SearchResponse
 from backend.app.services.agent_service import (
     AgentService,
     AgentServiceError,
     _commute_evaluation_from_tool_payload,
+    _canonical_comparison_from_tool_payload,
+    _normalize_comparison_listings,
     _normalize_tool_listings,
     _route_from_tool_payload,
     get_agent_service,
@@ -111,6 +116,172 @@ def test_normalize_adk_tool_results_for_web_contract() -> None:
     assert listing.longitude == -122.101
     assert listing.score == 9.5
     assert listing.reason == "within budget; matches 2B2B"
+
+
+def test_canonical_listing_is_returned_additively_with_unknowns_intact() -> None:
+    canonical = {
+        "schemaVersion": "kbf.canonical-listing.v1",
+        "identity": {
+            "id": "listing-1",
+            "sourceListingId": "source-1",
+            "propertyName": "Heatherstone",
+        },
+        "location": {
+            "address": "877 Heatherstone Way",
+            "city": "Mountain View",
+            "state": "CA",
+            "zipCode": None,
+            "countryCode": "US",
+            "latitude": 37.4,
+            "longitude": -122.1,
+        },
+        "pricing": {"rent": 3180, "rentMin": None, "rentMax": None},
+        "property": {
+            "bedrooms": 2,
+            "bedroomsMin": None,
+            "bedroomsMax": None,
+            "bathrooms": None,
+            "bathroomsMinEvidence": 2,
+            "propertyType": "Apartment",
+            "futureAdditiveField": "kept",
+        },
+        "availability": {},
+        "policies": {"petsAllowed": None, "parkingAvailable": True},
+        "features": {},
+        "media": {},
+        "contact": {},
+        "source": {"url": "https://example.com/listing-1"},
+        "evidence": {"detailVerified": False},
+        "completeness": {
+            "unknownFields": ["property.bathrooms", "policies.petsAllowed"],
+            "decisionReady": False,
+        },
+    }
+    listings = _normalize_tool_listings(
+        {
+            "top_5": [
+                {
+                    "listing": {"id": "listing-1"},
+                    "backend_listing": canonical,
+                }
+            ]
+        },
+        [],
+    )
+
+    payload = listings[0].model_dump(mode="json")
+
+    assert payload["id"] == "listing-1"
+    assert payload["canonicalListing"]["property"]["bathrooms"] is None
+    assert payload["canonicalListing"]["policies"]["petsAllowed"] is None
+    assert (
+        payload["canonicalListing"]["property"]["futureAdditiveField"]
+        == "kept"
+    )
+
+
+def test_comparison_normalization_uses_structured_tool_data_only() -> None:
+    tool_payload = {
+        "requested": ["one", "two"],
+        "candidates": [
+            {
+                "listing_id": "one",
+                "hard_constraint_status": "pass",
+                "satisfies_current_requirements": True,
+                "soft_preference_evidence": [
+                    {"preference": "quiet", "status": "supported"}
+                ],
+                "tradeoffs": ["higher rent"],
+                "comparison_unknowns": ["policies.petPolicy"],
+                "decision_unknowns": ["policies.petPolicy"],
+                "decision_ready": False,
+                "score": 91.5,
+                "current_search_rank": 1,
+            },
+            {
+                "listing_id": "two",
+                "hard_constraint_status": "not_evaluated",
+                "satisfies_current_requirements": None,
+                "comparison_unknowns": [],
+                "decision_unknowns": [],
+                "decision_ready": True,
+                "current_search_rank": 2,
+            },
+        ],
+    }
+
+    first = _canonical_comparison_from_tool_payload(tool_payload)
+    second = _canonical_comparison_from_tool_payload(tool_payload)
+
+    assert first is not None
+    assert first == second
+    assert first.schemaVersion == "kbf.canonical-comparison.v1"
+    assert first.listingIds == ["one", "two"]
+    assert first.results[0].tradeoffs == ["higher rent"]
+    assert first.results[1].hardConstraintStatus == "unknown"
+
+
+def test_comparison_returns_selected_verified_canonical_listings() -> None:
+    canonical = {
+        "schemaVersion": "kbf.canonical-listing.v1",
+        "identity": {
+            "id": "one",
+            "sourceListingId": "source-one",
+            "propertyName": "Heatherstone",
+        },
+        "location": {
+            "address": "877 Heatherstone Way",
+            "city": "Mountain View",
+            "state": "CA",
+            "zipCode": "94040",
+            "countryCode": "US",
+            "latitude": 37.4,
+            "longitude": -122.1,
+        },
+        "pricing": {"rent": 3180, "rentMin": None, "rentMax": None},
+        "property": {
+            "bedrooms": 2,
+            "bedroomsMin": None,
+            "bedroomsMax": None,
+            "bathrooms": None,
+            "bathroomsMinEvidence": None,
+            "propertyType": "Apartment",
+        },
+        "availability": {},
+        "policies": {
+            "petsAllowed": True,
+            "petPolicy": "Cats and dogs allowed",
+            "parkingAvailable": True,
+        },
+        "features": {},
+        "media": {},
+        "contact": {},
+        "source": {"url": "https://example.com/one"},
+        "evidence": {"detailVerified": True},
+        "completeness": {
+            "unknownFields": ["property.bathrooms"],
+            "decisionReady": False,
+        },
+    }
+
+    listings = _normalize_comparison_listings(
+        {
+            "candidates": [
+                {
+                    "listing_id": "one",
+                    "current_search_rank": 1,
+                    "canonical_listing": canonical,
+                }
+            ]
+        }
+    )
+
+    assert len(listings) == 1
+    assert listings[0].id == "one"
+    assert listings[0].rank == 1
+    assert listings[0].bathrooms is None
+    assert listings[0].canonicalListing is not None
+    assert listings[0].canonicalListing.policies["petsAllowed"] is True
 
 
 def test_normalize_commute_and_selected_route_contract() -> None:
@@ -350,3 +521,120 @@ def test_selected_route_http_contract() -> None:
         }
     finally:
         application.dependency_overrides.clear()
+
+
+def test_comparison_http_contract_returns_facts_and_gemini_explanation() -> None:
+    class FakeComparisonService:
+        async def compare_listings(
+            self,
+            listing_ids: list[str],
+            conversation_id: str,
+            *,
+            user_id: str,
+        ):
+            assert listing_ids == ["one", "two"]
+            assert conversation_id == "conversation-1"
+            assert user_id == "contract-test-user"
+            return {
+                "conversationId": conversation_id,
+                "message": "One is cheaper; two has stronger parking evidence.",
+                "listings": [],
+                "comparison": {
+                    "schemaVersion": "kbf.canonical-comparison.v1",
+                    "listingIds": listing_ids,
+                    "results": [
+                        {
+                            "listingId": listing_id,
+                            "hardConstraintStatus": "pass",
+                            "satisfiesCurrentRequirements": True,
+                            "softPreferenceEvidence": [],
+                            "tradeoffs": [],
+                            "comparisonUnknowns": [],
+                            "decisionUnknowns": [],
+                            "decisionReady": True,
+                            "score": None,
+                            "rank": rank,
+                        }
+                        for rank, listing_id in enumerate(listing_ids, 1)
+                    ],
+                },
+                "searchPerformed": False,
+                "mode": "adk",
+            }
+
+    application = contract_test_app()
+    application.dependency_overrides[get_agent_service] = (
+        lambda: FakeComparisonService()
+    )
+    try:
+        response = TestClient(application).post(
+            "/api/compare",
+            json={
+                "listingIds": ["one", "two"],
+                "conversationId": "conversation-1",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["comparison"]["listingIds"] == ["one", "two"]
+        assert response.json()["message"].startswith("One is cheaper")
+
+        invalid = TestClient(application).post(
+            "/api/compare",
+            json={
+                "listingIds": ["one", "one"],
+                "conversationId": "conversation-1",
+            },
+        )
+        assert invalid.status_code == 422
+    finally:
+        application.dependency_overrides.clear()
+
+
+def test_comparison_prompt_keeps_listing_ids_out_of_user_facing_copy() -> None:
+    captured: dict[str, str] = {}
+    service = AgentService(mode="stub")
+
+    async def fake_send_message(
+        message: str,
+        conversation_id: str | None = None,
+        *,
+        user_id: str,
+    ) -> SearchResponse:
+        captured["message"] = message
+        assert conversation_id == "conversation-1"
+        assert user_id == "user-1"
+        return SearchResponse(
+            conversationId="conversation-1",
+            message="Compare 151 S Bernardo Ave and 988 E El Camino Real.",
+            comparison={
+                "schemaVersion": "kbf.canonical-comparison.v1",
+                "listingIds": ["74pt6lx", "v0c38pe"],
+                "results": [],
+            },
+            mode="stub",
+        )
+
+    service.send_message = fake_send_message  # type: ignore[method-assign]
+    response = asyncio.run(
+        service.compare_listings(
+            ["74pt6lx", "v0c38pe"],
+            "conversation-1",
+            user_id="user-1",
+        )
+    )
+
+    assert "refer to homes by address or property name" in captured["message"]
+    assert "do not display internal listing IDs" in captured["message"]
+    assert "same order as the JSON array" in captured["message"]
+    assert "Use plain renter-friendly language" in captured["message"]
+    assert "structured compare_candidates response as the only fact source" in captured[
+        "message"
+    ]
+    assert "For query-backed values" in captured["message"]
+    assert "mentioned only in a listing description" in captured["message"]
+    assert (
+        "word confirmed only when the structured tool result"
+        in captured["message"]
+    )
+    assert response.comparison is not None
+    assert response.comparison.listingIds == ["74pt6lx", "v0c38pe"]

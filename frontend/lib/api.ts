@@ -1,5 +1,7 @@
 import { getFirebaseIdToken } from "@/lib/firebase-auth";
 import type {
+  CanonicalComparison,
+  CanonicalListing,
   Commute,
   CommuteEvaluation,
   Listing,
@@ -141,8 +143,16 @@ function parseListing(value: unknown): Listing {
     title: optionalString(value.title, "listing title"),
     address: optionalString(value.address, "listing address"),
     price: optionalNumber(value.price, "listing price"),
+    priceMin: optionalNumber(value.priceMin, "listing minimum price"),
+    priceMax: optionalNumber(value.priceMax, "listing maximum price"),
     bedrooms: optionalNumber(value.bedrooms, "listing bedrooms"),
+    bedroomsMin: optionalNumber(value.bedroomsMin, "listing minimum bedrooms"),
+    bedroomsMax: optionalNumber(value.bedroomsMax, "listing maximum bedrooms"),
     bathrooms: optionalNumber(value.bathrooms, "listing bathrooms"),
+    bathroomsMinEvidence: optionalNumber(
+      value.bathroomsMinEvidence,
+      "listing minimum bathroom evidence",
+    ),
     latitude: optionalNumber(value.latitude, "listing latitude"),
     longitude: optionalNumber(value.longitude, "listing longitude"),
     url: optionalUrl(value.url, "listing URL"),
@@ -156,6 +166,66 @@ function parseListing(value: unknown): Listing {
       value.commute === undefined || value.commute === null
         ? undefined
         : parseCommute(value.commute),
+    canonicalListing:
+      value.canonicalListing === undefined || value.canonicalListing === null
+        ? undefined
+        : parseCanonicalListing(value.canonicalListing),
+  };
+}
+
+function parseCanonicalListing(value: unknown): CanonicalListing {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== "kbf.canonical-listing.v1" ||
+    !isRecord(value.identity) ||
+    typeof value.identity.id !== "string" ||
+    !isRecord(value.location) ||
+    !isRecord(value.pricing) ||
+    !isRecord(value.property) ||
+    !isRecord(value.availability) ||
+    !isRecord(value.policies) ||
+    !isRecord(value.features) ||
+    !isRecord(value.media) ||
+    !isRecord(value.contact) ||
+    !isRecord(value.source) ||
+    !isRecord(value.evidence) ||
+    !isRecord(value.completeness)
+  ) {
+    throw new ApiError("Invalid canonical listing in API response.");
+  }
+  return value as unknown as CanonicalListing;
+}
+
+function parseCanonicalComparison(value: unknown): CanonicalComparison {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== "kbf.canonical-comparison.v1" ||
+    !Array.isArray(value.listingIds) ||
+    !value.listingIds.every((item) => typeof item === "string") ||
+    !Array.isArray(value.results)
+  ) {
+    throw new ApiError("Invalid comparison in API response.");
+  }
+  const statuses = ["pass", "fail", "evidence_only", "unknown"];
+  const results = value.results.map((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.listingId !== "string" ||
+      !statuses.includes(String(item.hardConstraintStatus)) ||
+      !Array.isArray(item.softPreferenceEvidence) ||
+      !Array.isArray(item.tradeoffs) ||
+      !Array.isArray(item.comparisonUnknowns) ||
+      !Array.isArray(item.decisionUnknowns) ||
+      typeof item.decisionReady !== "boolean"
+    ) {
+      throw new ApiError("Invalid comparison result in API response.");
+    }
+    return item as unknown as CanonicalComparison["results"][number];
+  });
+  return {
+    schemaVersion: "kbf.canonical-comparison.v1",
+    listingIds: value.listingIds as string[],
+    results,
   };
 }
 
@@ -183,6 +253,11 @@ function parseSearchResponse(value: unknown): SearchResponse {
       value.route === undefined || value.route === null
         ? undefined
         : parseRouteDetail(value.route),
+    comparison:
+      value.comparison === undefined || value.comparison === null
+        ? undefined
+        : parseCanonicalComparison(value.comparison),
+    searchPerformed: value.searchPerformed === true,
     mode: value.mode,
   };
 }
@@ -199,6 +274,7 @@ function parseShortlistItem(value: unknown): ShortlistItem {
   return {
     listing: parseListing(value.listing),
     sourceConversationId: value.sourceConversationId,
+    note: optionalString(value.note, "shortlist note"),
     savedAt: value.savedAt,
     updatedAt: value.updatedAt,
   };
@@ -272,6 +348,33 @@ export async function sendChat(
     throw new ApiError("Backend returned invalid JSON.");
   }
   return parseSearchResponse(payload);
+}
+
+export async function compareListings(
+  listingIds: string[],
+  conversationId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<SearchResponse> {
+  const headers = await authenticatedHeaders();
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/compare`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ listingIds, conversationId }),
+      cache: "no-store",
+      signal: options.signal,
+    });
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "AbortError") throw caught;
+    throw new ApiError("Can’t reach the rental comparison service.");
+  }
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  const parsed = parseSearchResponse(await response.json());
+  if (!parsed.comparison) {
+    throw new ApiError("The Agent did not return structured comparison facts.");
+  }
+  return parsed;
 }
 
 export async function getSelectedRoute(
@@ -362,4 +465,27 @@ export async function removeShortlistItem(listingId: string): Promise<void> {
     throw new ApiError("Can’t reach shortlist storage. Check that the backend is running.");
   }
   if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+}
+
+export async function updateShortlistNote(
+  listingId: string,
+  note?: string,
+): Promise<ShortlistItem> {
+  const headers = await authenticatedHeaders();
+  let response: Response;
+  try {
+    response = await fetch(
+      `${backendUrl}/api/shortlist/${encodeURIComponent(listingId)}`,
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ note: note ?? null }),
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new ApiError("Can’t reach shortlist storage. Check that the backend is running.");
+  }
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  return parseShortlistItem(await response.json());
 }

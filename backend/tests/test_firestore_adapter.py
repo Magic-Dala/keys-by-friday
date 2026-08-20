@@ -149,6 +149,11 @@ def test_firestore_adapters_persist_across_repository_instances(
             listings=[listing],
             commute_status="available",
             route_listing_id="provider/listing-1",
+            comparison={
+                "schemaVersion": "kbf.canonical-comparison.v1",
+                "listingIds": ["provider/listing-1"],
+                "results": [],
+            },
         )
 
         # New adapter objects share only the fake Firestore client. Their ability
@@ -165,25 +170,30 @@ def test_firestore_adapters_persist_across_repository_instances(
             source_conversation_id="conversation-1",
             listing_snapshot=listing,
         )
+        updated = await shortlist.update_note(
+            "user-a", "provider/listing-1", "Tour Saturday"
+        )
         recreated_shortlist = FirestoreShortlistRepository(client)
         listed = await recreated_shortlist.list_for_user("user-a")
         await recreated_shortlist.remove("user-a", "provider/listing-1")
         empty = await FirestoreShortlistRepository(client).list_for_user(
             "user-a"
         )
-        return claimed, recorded, loaded, saved, listed, empty
+        return claimed, recorded, loaded, saved, updated, listed, empty
 
-    claimed, recorded, loaded, saved, listed, empty = asyncio.run(scenario())
+    claimed, recorded, loaded, saved, updated, listed, empty = asyncio.run(scenario())
 
     assert claimed.turn_count == 0
     assert recorded.turn_count == 1
     assert loaded.last_route_listing_id == "provider/listing-1"
     assert loaded.last_listings[0]["commute"]["durationMinutes"] == 18
+    assert loaded.last_comparison is not None
     assert saved.listing_id == "provider/listing-1"
+    assert updated.note == "Tour Saturday"
     assert [item.listing_id for item in listed] == ["provider/listing-1"]
     assert empty == []
-    assert client.transactions == 3
-    assert client.transaction_reads == 3
-    assert client.transaction_writes == 3
+    assert client.transactions == 4
+    assert client.transaction_reads == 4
+    assert client.transaction_writes == 4
     assert client.queries == 2
     assert client.deletes == 1
