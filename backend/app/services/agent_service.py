@@ -6,10 +6,10 @@ import logging
 import math
 import re
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
-from backend.app.config import get_settings
+from backend.app.config import AdkSessionMode, get_settings
 from backend.app.models.search import (
     CommuteEvaluationResponse,
     CommuteResponse,
@@ -25,6 +25,7 @@ from backend.app.repositories.base import (
     RepositoryError,
 )
 from backend.app.repositories.dependencies import get_conversation_repository
+from backend.app.services.conversation_turns import ConversationTurnCoordinator
 
 
 _CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
@@ -508,6 +509,9 @@ class AgentService:
         mode: str | None = None,
         timeout_seconds: float | None = None,
         conversation_repository: ConversationRepository | None = None,
+        session_mode: str | None = None,
+        session_database_url: str | None = None,
+        runner: Any | None = None,
     ) -> None:
         settings = get_settings()
         self.mode = (mode or settings.agent_mode).strip().lower()
@@ -522,7 +526,19 @@ class AgentService:
             raise ValueError(
                 "Agent timeout must be a finite number greater than zero."
             )
-        self._runner = None
+        configured_session_mode = (
+            session_mode or settings.adk_session_mode
+        ).strip().lower()
+        if configured_session_mode not in {"memory", "database"}:
+            raise ValueError("ADK_SESSION_MODE must be 'memory' or 'database'.")
+        self.session_mode = cast(AdkSessionMode, configured_session_mode)
+        self._session_database_url = (
+            settings.adk_session_database_url
+            if session_database_url is None
+            else session_database_url
+        )
+        self._runner = runner
+        self._turns = ConversationTurnCoordinator()
         if conversation_repository is None:
             from backend.app.repositories.memory import (
                 MemoryConversationRepository,
@@ -533,10 +549,20 @@ class AgentService:
 
     def _get_runner(self):
         if self._runner is None:
-            from google.adk.runners import InMemoryRunner
-            from rental_agent.agent import root_agent
+            from backend.app.adk_runtime import (
+                AdkRuntimeConfigurationError,
+                create_adk_runner,
+            )
 
-            self._runner = InMemoryRunner(agent=root_agent, app_name="keys_by_friday_web")
+            try:
+                self._runner = create_adk_runner(
+                    mode=self.session_mode,
+                    database_url=self._session_database_url,
+                )
+            except AdkRuntimeConfigurationError:
+                raise AgentServiceError(
+                    "ADK session storage could not be initialized"
+                ) from None
         return self._runner
 
     async def _claim_conversation(
@@ -596,6 +622,18 @@ class AgentService:
     ) -> SearchResponse:
         conversation_id = conversation_id or str(uuid4())
         await self._claim_conversation(conversation_id, user_id)
+        async with self._turns.hold(user_id, conversation_id):
+            return await self._send_message_locked(
+                message, conversation_id, user_id=user_id
+            )
+
+    async def _send_message_locked(
+        self,
+        message: str,
+        conversation_id: str,
+        *,
+        user_id: str,
+    ) -> SearchResponse:
         if self.mode == "stub":
             response = SearchResponse(
                 conversationId=conversation_id,
@@ -649,8 +687,8 @@ class AgentService:
 
         from google.genai import types
 
-        runner = self._get_runner()
         try:
+            runner = self._get_runner()
             session = await runner.session_service.get_session(
                 app_name=runner.app_name, user_id=user_id, session_id=conversation_id
             )
@@ -744,25 +782,28 @@ class AgentService:
         from rental_agent.agent import _route_details_from_state
 
         await self._claim_conversation(conversation_id, user_id)
-        state: object = {}
-        if self.mode == "adk":
-            runner = self._get_runner()
-            try:
-                session = await runner.session_service.get_session(
-                    app_name=runner.app_name,
-                    user_id=user_id,
-                    session_id=conversation_id,
-                )
-            except Exception as exc:
-                raise AgentServiceError("ADK session lookup failed") from exc
-            if session is not None:
-                state = session.state
+        async with self._turns.hold(user_id, conversation_id):
+            state: object = {}
+            if self.mode == "adk":
+                runner = self._get_runner()
+                try:
+                    session = await runner.session_service.get_session(
+                        app_name=runner.app_name,
+                        user_id=user_id,
+                        session_id=conversation_id,
+                    )
+                except Exception as exc:
+                    raise AgentServiceError("ADK session lookup failed") from exc
+                if session is not None:
+                    state = session.state
 
-        payload = _route_details_from_state(listing_id, destination, mode, state)
-        route = _route_from_tool_payload(payload)
-        if route is None:
-            raise AgentServiceError("Route detail normalization failed")
-        return route
+            payload = _route_details_from_state(
+                listing_id, destination, mode, state
+            )
+            route = _route_from_tool_payload(payload)
+            if route is None:
+                raise AgentServiceError("Route detail normalization failed")
+            return route
 
 
 @lru_cache(maxsize=1)

@@ -135,16 +135,15 @@ Durable now:
 - latest normalized listing snapshots;
 - shortlist items, including available commute summaries.
 
-Still held by the current ADK process:
+Stored separately by the configured ADK SessionService:
 
 - the full multi-turn ADK session;
-- raw Agent session state;
+- Agent session state;
 - selected-route state/polyline used by `/api/route`.
 
-Therefore, after a Cloud Run restart, the backend still knows that conversation
-`C` belongs to user `A`, but the Agent may not remember all earlier natural-
-language refinements. Persisting/restoring the full ADK session is a separate
-milestone.
+With `ADK_SESSION_MODE=database`, that separate ADK data also survives a Cloud
+Run restart. With the local default `ADK_SESSION_MODE=memory`, it intentionally
+disappears. See `docs/adk-sessions.md` for that boundary and its restart test.
 
 ## 1. Check Mac prerequisites
 
@@ -435,4 +434,4 @@ cross-user administrative query filtering by status and ordering by time.
 | Save returns `403` | Conversation belongs to another Firebase user | current signed-in identity |
 | Request returns `503` | Firestore client, credentials, IAM, or database is unavailable | ADC, database creation, `roles/datastore.user`, logs |
 | Save works but commute is absent | Search did not have available Maps evidence | Maps request completeness, key, Routes result |
-| Full follow-up context is lost after restart | Metadata survived but ADK session did not | expected current boundary; session persistence is later |
+| Full follow-up context is lost after restart | ADK is still using memory mode | set `ADK_SESSION_MODE=database` and a durable database URL |
