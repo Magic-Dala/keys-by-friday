@@ -37,6 +37,20 @@ def readiness_report(
             "configured" if persistence_ready else "not_configured"
         )
 
+    rate_values_valid = (
+        settings.anonymous_search_rate_limit > 0
+        and settings.anonymous_search_rate_window_seconds > 0
+    )
+    rate_limit_ready = rate_values_valid and (
+        not is_production or settings.persistence_mode == "firestore"
+    )
+    if not rate_values_valid:
+        checks["anonymous_rate_limit"] = "not_configured"
+    elif settings.persistence_mode == "firestore":
+        checks["anonymous_rate_limit"] = "firestore"
+    else:
+        checks["anonymous_rate_limit"] = "memory"
+
     if settings.adk_session_mode == "memory":
         session_ready = not is_production
         checks["adk_session"] = (
@@ -60,7 +74,13 @@ def readiness_report(
     if settings.agent_mode == "stub" and not is_production:
         checks["agent"] = "stub"
         checks["provider"] = "not_required"
-        return auth_ready and persistence_ready and session_ready, checks
+        return (
+            auth_ready
+            and persistence_ready
+            and session_ready
+            and rate_limit_ready,
+            checks,
+        )
 
     if settings.agent_mode == "stub":
         agent_ready = False
@@ -95,6 +115,7 @@ def readiness_report(
     return (
         auth_ready
         and persistence_ready
+        and rate_limit_ready
         and session_ready
         and agent_ready
         and provider_ready,

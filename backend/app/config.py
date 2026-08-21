@@ -32,6 +32,8 @@ class Settings:
     firestore_database_id: str = "(default)"
     adk_session_mode: AdkSessionMode = "memory"
     adk_session_database_url: str | None = field(default=None, repr=False)
+    anonymous_search_rate_limit: int = 10
+    anonymous_search_rate_window_seconds: int = 3600
 
 
 def _agent_mode(value: str) -> AgentMode:
@@ -81,6 +83,16 @@ def _positive_seconds(value: str) -> float:
     return seconds
 
 
+def _positive_integer(value: str, variable_name: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{variable_name} must be a whole number.") from exc
+    if number <= 0:
+        raise ValueError(f"{variable_name} must be greater than zero.")
+    return number
+
+
 def _log_level(value: str) -> str:
     normalized = value.strip().upper()
     if normalized not in _LOG_LEVELS:
@@ -128,5 +140,13 @@ def get_settings() -> Settings:
         ),
         adk_session_database_url=(
             os.getenv("ADK_SESSION_DATABASE_URL", "").strip() or None
+        ),
+        anonymous_search_rate_limit=_positive_integer(
+            os.getenv("ANONYMOUS_SEARCH_RATE_LIMIT", "10"),
+            "ANONYMOUS_SEARCH_RATE_LIMIT",
+        ),
+        anonymous_search_rate_window_seconds=_positive_integer(
+            os.getenv("ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS", "3600"),
+            "ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS",
         ),
     )

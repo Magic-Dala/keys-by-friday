@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 from typing import Any
@@ -12,6 +12,7 @@ from backend.app.repositories.base import (
     ConversationNotFoundError,
     ConversationOwnershipError,
     RepositoryUnavailableError,
+    RateLimitUsage,
     ShortlistItem,
     ShortlistItemNotFoundError,
 )
@@ -388,3 +389,87 @@ class FirestoreShortlistRepository:
 
     async def remove(self, user_id: str, listing_id: str) -> None:
         await asyncio.to_thread(self._remove_sync, user_id, listing_id)
+
+
+class FirestoreRateLimitRepository:
+    """Atomic distributed counters shared by all Cloud Run instances."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def _document(self, subject_id: str):
+        return self._client.collection("rateLimits").document(
+            _document_id("anonymous-agent-request", subject_id)
+        )
+
+    def _consume_sync(
+        self,
+        subject_id: str,
+        *,
+        limit: int,
+        window_seconds: int,
+        now: datetime,
+    ) -> RateLimitUsage:
+        try:
+            from firebase_admin import firestore
+
+            document = self._document(subject_id)
+            transaction = self._client.transaction()
+
+            @firestore.transactional
+            def consume(transaction):
+                snapshot = document.get(transaction=transaction)
+                data = snapshot.to_dict() or {} if snapshot.exists else {}
+                window_start = _datetime(data.get("windowStartedAt"), now)
+                count = max(int(data.get("requestCount", 0)), 0)
+                reset_at = window_start + timedelta(seconds=window_seconds)
+                if now >= reset_at:
+                    window_start, count = now, 0
+                    reset_at = now + timedelta(seconds=window_seconds)
+
+                allowed = count < limit
+                if allowed:
+                    count += 1
+                    transaction.set(
+                        document,
+                        {
+                            "schemaVersion": _SCHEMA_VERSION,
+                            "subjectHash": _document_id(
+                                "anonymous-user", subject_id
+                            ),
+                            "windowStartedAt": window_start,
+                            "requestCount": count,
+                            "resetAt": reset_at,
+                            "expiresAt": reset_at,
+                            "updatedAt": now,
+                        },
+                    )
+
+                return RateLimitUsage(
+                    allowed=allowed,
+                    limit=limit,
+                    remaining=max(limit - count, 0),
+                    reset_at=reset_at,
+                )
+
+            return consume(transaction)
+        except Exception as exc:
+            raise RepositoryUnavailableError(
+                "Firestore could not enforce the anonymous rate limit."
+            ) from exc
+
+    async def consume(
+        self,
+        subject_id: str,
+        *,
+        limit: int,
+        window_seconds: int,
+        now: datetime,
+    ) -> RateLimitUsage:
+        return await asyncio.to_thread(
+            self._consume_sync,
+            subject_id,
+            limit=limit,
+            window_seconds=window_seconds,
+            now=now,
+        )

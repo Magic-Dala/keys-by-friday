@@ -82,6 +82,7 @@ def test_readiness_is_ready_in_stub_mode(monkeypatch: pytest.MonkeyPatch) -> Non
             "api": "ok",
             "auth": "disabled",
             "persistence": "memory",
+            "anonymous_rate_limit": "memory",
             "adk_session": "memory",
             "agent": "stub",
             "provider": "not_required",
@@ -151,6 +152,7 @@ def test_readiness_accepts_configured_adk_and_realtyapi(
     assert response.json()["checks"]["agent"] == "configured"
     assert response.json()["checks"]["provider"] == "configured"
     assert response.json()["checks"]["persistence"] == "configured"
+    assert response.json()["checks"]["anonymous_rate_limit"] == "firestore"
     assert response.json()["checks"]["adk_session"] == "connected"
 
 

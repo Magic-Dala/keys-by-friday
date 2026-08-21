@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.app.repositories.base import (
     ConversationMetadata,
@@ -10,6 +10,7 @@ from backend.app.repositories.base import (
     ConversationOwnershipError,
     ShortlistItem,
     ShortlistItemNotFoundError,
+    RateLimitUsage,
 )
 
 
@@ -200,3 +201,38 @@ class MemoryShortlistRepository:
     async def remove(self, user_id: str, listing_id: str) -> None:
         async with self._lock:
             self._items.pop((user_id, listing_id), None)
+
+
+class MemoryRateLimitRepository:
+    """Process-local rate-limit storage for development and fast tests."""
+
+    def __init__(self) -> None:
+        self._windows: dict[str, tuple[datetime, int]] = {}
+        self._lock = asyncio.Lock()
+
+    async def consume(
+        self,
+        subject_id: str,
+        *,
+        limit: int,
+        window_seconds: int,
+        now: datetime,
+    ) -> RateLimitUsage:
+        async with self._lock:
+            window_start, count = self._windows.get(subject_id, (now, 0))
+            reset_at = window_start + timedelta(seconds=window_seconds)
+            if now >= reset_at:
+                window_start, count = now, 0
+                reset_at = now + timedelta(seconds=window_seconds)
+
+            allowed = count < limit
+            if allowed:
+                count += 1
+                self._windows[subject_id] = (window_start, count)
+
+            return RateLimitUsage(
+                allowed=allowed,
+                limit=limit,
+                remaining=max(limit - count, 0),
+                reset_at=reset_at,
+            )

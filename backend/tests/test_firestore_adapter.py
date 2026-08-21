@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.app.repositories.firestore import (
     FirestoreConversationRepository,
+    FirestoreRateLimitRepository,
     FirestoreShortlistRepository,
 )
 
@@ -197,3 +199,52 @@ def test_firestore_adapters_persist_across_repository_instances(
     assert client.transaction_writes == 4
     assert client.queries == 2
     assert client.deletes == 1
+
+
+def test_firestore_rate_limit_is_shared_across_repository_instances(
+    monkeypatch,
+) -> None:
+    from firebase_admin import firestore
+
+    monkeypatch.setattr(firestore, "transactional", lambda function: function)
+    client = _FakeFirestoreClient()
+    now = datetime(2026, 8, 20, tzinfo=timezone.utc)
+
+    async def scenario():
+        first_repository = FirestoreRateLimitRepository(client)
+        first = await first_repository.consume(
+            "firebase-anonymous-uid",
+            limit=2,
+            window_seconds=3600,
+            now=now,
+        )
+        second_repository = FirestoreRateLimitRepository(client)
+        second = await second_repository.consume(
+            "firebase-anonymous-uid",
+            limit=2,
+            window_seconds=3600,
+            now=now,
+        )
+        blocked = await first_repository.consume(
+            "firebase-anonymous-uid",
+            limit=2,
+            window_seconds=3600,
+            now=now,
+        )
+        return first, second, blocked
+
+    first, second, blocked = asyncio.run(scenario())
+
+    assert first.allowed is True
+    assert first.remaining == 1
+    assert second.allowed is True
+    assert second.remaining == 0
+    assert blocked.allowed is False
+    assert blocked.remaining == 0
+    assert client.transactions == 3
+    assert client.transaction_reads == 3
+    assert client.transaction_writes == 2
+    [(path, document)] = list(client.documents.items())
+    assert path[0] == "rateLimits"
+    assert "firebase-anonymous-uid" not in "/".join(path)
+    assert document["requestCount"] == 2

@@ -14,6 +14,7 @@ Browser
 → FastAPI Backend
 → Firebase Admin token verification
 → FastAPI services and repository interfaces
+  ├→ Anonymous request limiter → memory locally / Firestore in production
   ├→ AgentService
   │  ├→ Google ADK Rental Agent
   │  │  ├→ Rental Provider
@@ -61,6 +62,7 @@ not an in-progress heartbeat.
 - verify Firebase identity and bind conversations to the verified uid
 - persist conversation metadata and shortlist snapshots through repository interfaces
 - persist canonical listing snapshots and deterministic comparison records
+- enforce one distributed Agent-request budget per anonymous Firebase uid
 - select and operate the ADK session service used for conversational continuity
 
 The backend is an adapter, not a second rental-decision engine.
@@ -86,6 +88,8 @@ The backend is an adapter, not a second rental-decision engine.
 - Gemini may explain structured comparisons but is not a rental-fact source.
 - Backend never trusts a user ID supplied by browser data.
 - Frontend never accesses Firestore directly; it uses authenticated FastAPI routes.
+- Anonymous `/api/chat` and `/api/compare` calls consume the same distributed
+  Firestore rate-limit bucket before Agent execution.
 - Firestore persistence does not duplicate Agent, provider, ranking, or Maps logic.
 - Firestore application data and the ADK session database have different jobs:
   Firestore owns product metadata/shortlists; ADK owns Agent events and state.

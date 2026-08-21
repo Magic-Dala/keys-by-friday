@@ -253,10 +253,11 @@ FIREBASE_PROJECT_ID=${KBF_PROJECT_ID}
 ```
 
 Keep the Cloud Run service private with `--no-allow-unauthenticated` for this
-milestone. Firebase authentication isolates users and conversations, but
-anonymous Firebase identities do not rate-limit aggregate Gemini, RealtyAPI, or
-Routes spending. The deployment guide grants selected developers the Cloud Run
-Invoker role and shows how to test both the Cloud Run IAM and Firebase layers.
+milestone. Firebase authentication isolates users and conversations. The
+backend also applies a Firestore-backed per-uid limit to anonymous Agent calls,
+but that does not cap aggregate Gemini, RealtyAPI, or Routes spending. The
+deployment guide grants selected developers the Cloud Run Invoker role and
+shows how to test both the Cloud Run IAM and Firebase layers.
 
 As a deployment guardrail, `APP_ENV=production` with `AUTH_MODE=disabled` makes
 `/ready` fail and makes `/api/chat` return HTTP `503`. This prevents a missing
@@ -276,7 +277,8 @@ make Cloud Run public based on Firebase authentication alone.
 | `auth/operation-not-allowed` | The selected provider is disabled | Enable Anonymous, Email/Password, or Google in **Authentication → Sign-in method** |
 | Google sign-in reports an unauthorized domain | The browser hostname is not allowed for OAuth | Add the frontend hostname under **Authentication → Settings → Authorized domains** |
 | `/api/chat` returns 401 | Token missing, expired, forged, or for another Firebase project | Frontend/backend project IDs and Authorization header |
-| `/api/chat` returns 503 | Backend Firebase configuration is unavailable | `AUTH_MODE`, `FIREBASE_PROJECT_ID`, and local ADC |
+| `/api/chat` returns 503 | Backend Firebase or anonymous-limit storage is unavailable | `AUTH_MODE`, `FIREBASE_PROJECT_ID`, Firestore settings, and local ADC |
+| `/api/chat` returns 429 | This anonymous uid used its Agent allowance | Wait for `Retry-After`, or sign in with a non-anonymous provider when available |
 | `/api/chat` returns 403 | Conversation belongs to another verified uid | Start a new conversation for the current user |
 | Direct Cloud Run URL returns 401/403 | Cloud Run IAM rejected a caller without Invoker credentials | Private deployment is working; use the deployment guide's identity-token test |
 | Browser reports a CORS error | Origin or allowed headers do not match | `FRONTEND_ORIGIN` and restart backend |

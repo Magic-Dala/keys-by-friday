@@ -41,11 +41,11 @@ a separate Places API resolution step.
 
 Before submission, establish a repeatable deployment path, responsive UI, representative demo scenarios, and final end-to-end verification.
 
-The backend stays private while Firebase anonymous sign-in is the only public
-protection. Before enabling direct internet access, add a reviewed public edge,
-distributed per-user rate limits, an aggregate request/cost cap, provider quotas,
-and abuse monitoring. Firebase identity is necessary for ownership but is not a
-rate limiter.
+The backend now has a distributed per-anonymous-uid Agent-request limit. Before
+enabling broad direct internet access, also add a reviewed public edge, an
+aggregate project request/cost cap, provider quotas, and abuse monitoring.
+Firebase identity plus a per-uid limit does not stop a determined user from
+clearing browser data and creating another anonymous identity.
 
 ## Later Decision Features
 
