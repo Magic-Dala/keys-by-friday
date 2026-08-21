@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from functools import lru_cache
+import json
 import logging
 import math
 import re
@@ -11,6 +13,9 @@ from uuid import uuid4
 
 from backend.app.config import AdkSessionMode, get_settings
 from backend.app.models.search import (
+    CanonicalComparisonResponse,
+    CanonicalComparisonResultResponse,
+    CanonicalListingResponse,
     ComparisonResponse,
     CommuteEvaluationResponse,
     CommuteResponse,
@@ -153,6 +158,99 @@ def _canonical_listing(container: dict[str, Any] | None) -> dict[str, Any] | Non
     if payload.get("schemaVersion") != _CANONICAL_LISTING_SCHEMA:
         return None
     return payload
+
+
+def _canonical_listing_response(
+    payload: dict[str, Any] | None,
+) -> CanonicalListingResponse | None:
+    if payload is None:
+        return None
+    try:
+        return CanonicalListingResponse.model_validate(payload)
+    except ValueError:
+        return None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _canonical_comparison_from_tool_payload(
+    payload: dict[str, Any] | None,
+) -> CanonicalComparisonResponse | None:
+    """Normalize only structured comparison tool data, never Agent prose."""
+
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("schemaVersion") == _CANONICAL_COMPARISON_SCHEMA:
+        try:
+            return CanonicalComparisonResponse.model_validate(payload)
+        except ValueError:
+            return None
+
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return None
+
+    results: list[CanonicalComparisonResultResponse] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        listing_id = candidate.get("listing_id")
+        if listing_id is None or not str(listing_id).strip():
+            continue
+
+        raw_status = candidate.get("hard_constraint_status")
+        status = (
+            raw_status
+            if raw_status in {"pass", "fail", "evidence_only", "unknown"}
+            else "unknown"
+        )
+        satisfies = candidate.get("satisfies_current_requirements")
+        if not isinstance(satisfies, bool):
+            satisfies = None
+        soft_evidence = candidate.get("soft_preference_evidence")
+        normalized_soft_evidence = (
+            [item for item in soft_evidence if isinstance(item, dict)]
+            if isinstance(soft_evidence, list)
+            else []
+        )
+        tradeoffs = candidate.get("tradeoffs")
+        normalized_tradeoffs = (
+            [
+                item
+                for item in tradeoffs
+                if isinstance(item, (str, dict))
+            ]
+            if isinstance(tradeoffs, list)
+            else []
+        )
+        rank_value = candidate.get("rank", candidate.get("current_search_rank"))
+        rank = int(rank_value) if isinstance(rank_value, (int, float)) else None
+        results.append(
+            CanonicalComparisonResultResponse(
+                listingId=str(listing_id),
+                hardConstraintStatus=status,
+                satisfiesCurrentRequirements=satisfies,
+                softPreferenceEvidence=normalized_soft_evidence,
+                tradeoffs=normalized_tradeoffs,
+                comparisonUnknowns=_string_list(
+                    candidate.get("comparison_unknowns")
+                ),
+                decisionUnknowns=_string_list(candidate.get("decision_unknowns")),
+                decisionReady=candidate.get("decision_ready") is True,
+                score=_optional_float(candidate.get("score")),
+                rank=rank,
+            )
+        )
+
+    return CanonicalComparisonResponse(
+        schemaVersion=_CANONICAL_COMPARISON_SCHEMA,
+        listingIds=[item.listingId for item in results],
+        results=results,
+    )
 
 
 def _canonical_section(
@@ -305,6 +403,7 @@ def _listing_from_tool_payload(
             rank=rank,
             sourcePostings=source_postings or [],
             commute=commute,
+            canonicalListing=_canonical_listing_response(canonical),
         )
 
     listing_id = listing.get("id")
@@ -390,6 +489,89 @@ def _source_posting_from_tool_payload(
         bathrooms=_optional_float(listing.get("bathrooms")),
         bathroomsMinEvidence=_optional_float(listing.get("bathrooms_min_evidence")),
     )
+
+
+def _normalize_comparison_listings(
+    comparison_payload: dict[str, Any] | None,
+) -> list[ListingResponse]:
+    """Return selected canonical listings refreshed by compare_candidates."""
+
+    if not isinstance(comparison_payload, dict):
+        return []
+    candidates = comparison_payload.get("candidates")
+    if not isinstance(candidates, list):
+        return []
+
+    results: list[ListingResponse] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        canonical = candidate.get("canonical_listing")
+        if (
+            not isinstance(canonical, dict)
+            or canonical.get("schemaVersion") != _CANONICAL_LISTING_SCHEMA
+        ):
+            continue
+        rank_value = candidate.get("rank", candidate.get("current_search_rank"))
+        rank = int(rank_value) if isinstance(rank_value, (int, float)) else None
+        normalized = _listing_from_tool_payload(
+            {}, candidate, canonical=canonical, rank=rank
+        )
+        if normalized is not None and normalized.id not in seen:
+            results.append(normalized)
+            seen.add(normalized.id)
+    return results
+
+
+def _merge_verified_listing_snapshot(
+    existing: dict[str, Any], update: ListingResponse
+) -> dict[str, Any]:
+    """Overlay verified facts while retaining search-card presentation fields."""
+
+    merged = deepcopy(existing)
+    refreshed = update.model_dump(mode="json")
+    preserve_when_empty = {"commute", "rank", "reason", "score", "sourcePostings"}
+    for key, value in refreshed.items():
+        if key in preserve_when_empty and value in (None, [], {}):
+            continue
+        merged[key] = deepcopy(value)
+    return ListingResponse.model_validate(merged).model_dump(mode="json")
+
+
+def _merge_comparison_listing_updates(
+    existing: tuple[dict[str, Any], ...],
+    updates: list[ListingResponse],
+) -> tuple[list[dict[str, Any]], list[ListingResponse]]:
+    """Update selected listings without dropping unselected search results."""
+
+    updates_by_id = {item.id: item for item in updates}
+    merged_all: list[dict[str, Any]] = []
+    merged_selected: dict[str, ListingResponse] = {}
+    existing_ids: set[str] = set()
+
+    for snapshot in existing:
+        listing_id = str(snapshot.get("id", ""))
+        existing_ids.add(listing_id)
+        update = updates_by_id.get(listing_id)
+        if update is None:
+            merged_all.append(deepcopy(snapshot))
+            continue
+        merged = _merge_verified_listing_snapshot(snapshot, update)
+        merged_all.append(merged)
+        merged_selected[listing_id] = ListingResponse.model_validate(merged)
+
+    for update in updates:
+        if update.id in existing_ids:
+            continue
+        snapshot = update.model_dump(mode="json")
+        merged_all.append(snapshot)
+        merged_selected[update.id] = update
+
+    selected_in_request_order = [
+        merged_selected.get(update.id, update) for update in updates
+    ]
+    return merged_all, selected_in_request_order
 
 
 def _normalize_tool_listings(
@@ -516,6 +698,18 @@ def _normalize_tool_listings(
     return results
 
 
+def _normalize_response_listings(
+    search_payload: dict[str, Any] | None,
+    detail_payloads: list[dict[str, Any]],
+    comparison_payload: dict[str, Any] | None,
+) -> list[ListingResponse]:
+    """Select the listing payload produced by the tool used on this turn."""
+
+    if comparison_payload is not None:
+        return _normalize_comparison_listings(comparison_payload)
+    return _normalize_tool_listings(search_payload, detail_payloads)
+
+
 class AgentService:
     def __init__(
         self,
@@ -599,13 +793,36 @@ class AgentService:
         user_id: str,
     ) -> None:
         try:
+            listings_to_record: list[dict[str, Any]] | None = None
+            if response.searchPerformed:
+                listings_to_record = [
+                    listing.model_dump(mode="json")
+                    for listing in response.listings
+                ]
+            elif response.comparison is not None and response.listings:
+                existing = await self._conversations.get_for_user(
+                    response.conversationId, user_id
+                )
+                listings_to_record, response.listings = (
+                    _merge_comparison_listing_updates(
+                        existing.last_listings, response.listings
+                    )
+                )
+            elif response.listings:
+                listings_to_record = [
+                    listing.model_dump(mode="json")
+                    for listing in response.listings
+                ]
+
             await self._conversations.record_response(
                 response.conversationId,
                 user_id,
-                listings=[
-                    listing.model_dump(mode="json")
-                    for listing in response.listings
-                ],
+                listings=listings_to_record,
+                comparison=(
+                    response.comparison.model_dump(mode="json")
+                    if response.comparison is not None
+                    else None
+                ),
                 commute_status=(
                     response.commuteEvaluation.status
                     if response.commuteEvaluation is not None
@@ -778,14 +995,63 @@ class AgentService:
         return SearchResponse(
             conversationId=conversation_id,
             message=final_text,
-            listings=_normalize_tool_listings(search_payload, detail_payloads),
+            listings=_normalize_response_listings(
+                search_payload,
+                detail_payloads,
+                comparison_payload,
+            ),
             commuteEvaluation=_commute_evaluation_from_tool_payload(
                 search_payload.get("commute_summary") if search_payload else None
             ),
             route=_route_from_tool_payload(route_payload),
-            comparison=_comparison_from_tool_payload(comparison_payload),
+            comparison=_canonical_comparison_from_tool_payload(
+                comparison_payload
+            ),
+            searchPerformed=search_payload is not None,
             mode="adk",
         )
+
+    async def compare_listings(
+        self,
+        listing_ids: list[str],
+        conversation_id: str,
+        *,
+        user_id: str,
+    ) -> SearchResponse:
+        """Ask Gemini to explain deterministic comparison tool output."""
+
+        safe_ids = json.dumps(listing_ids, ensure_ascii=True)
+        response = await self.send_message(
+            (
+                "Compare only the current rental candidates whose listing IDs "
+                f"are in this JSON array: {safe_ids}. Use compare_candidates, "
+                "then explain its structured facts, evidence, tradeoffs, and "
+                "unknowns. In the final user-facing explanation, refer to homes "
+                "by address or property name and do not display internal listing "
+                "IDs, including provider-prefixed IDs. Keep IDs only for tool "
+                "selection, and discuss the homes in the same order as the JSON "
+                "array. Use plain renter-friendly language and avoid implementation "
+                "terms such as structured field, query-backed, canonical, or provider "
+                "metadata. Treat the structured compare_candidates response as the "
+                "only fact source. For query-backed values, say the search suggests "
+                "the fact but the detailed listing information does not confirm it. "
+                "For facts mentioned only in a listing description, attribute them "
+                "to the description and say they still need verification. Use the "
+                "word confirmed only when the structured tool result marks the fact "
+                "as confirmed. Do not invent missing rental facts."
+            ),
+            conversation_id,
+            user_id=user_id,
+        )
+        if response.comparison is None:
+            raise AgentServiceError(
+                "ADK agent completed without structured comparison data"
+            )
+        if response.comparison.listingIds != listing_ids:
+            raise AgentServiceError(
+                "ADK agent returned a different listing selection"
+            )
+        return response
 
     async def get_selected_route(
         self,

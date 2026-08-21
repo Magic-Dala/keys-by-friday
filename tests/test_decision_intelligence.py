@@ -175,6 +175,44 @@ def test_soft_preference_evidence_is_conservative(monkeypatch):
     }
 
 
+def test_in_unit_laundry_requires_explicit_unit_level_amenity(monkeypatch):
+    rows = [
+        replace(_listing("generic"), amenities=("Washer/Dryer",)),
+        replace(
+            _listing("explicit"),
+            amenities=("In-Unit Washer/Dryer",),
+        ),
+    ]
+    provider = DecisionProvider(rows)
+    context = _searched_context(
+        monkeypatch,
+        provider,
+        soft_preferences="in-unit laundry",
+    )
+
+    result = compare_candidates(
+        "generic,explicit",
+        verify_missing=False,
+        tool_context=context,
+    )
+    by_id = {item["listing_id"]: item for item in result["candidates"]}
+    generic = by_id["generic"]["soft_preference_evidence"][0]
+    explicit = by_id["explicit"]["soft_preference_evidence"][0]
+
+    assert generic == {
+        "preference": "in-unit laundry",
+        "status": "evidence_only",
+        "evidence": [{"field": "amenities", "match": "Washer/Dryer"}],
+    }
+    assert explicit == {
+        "preference": "in-unit laundry",
+        "status": "supported",
+        "evidence": [
+            {"field": "amenities", "match": "In-Unit Washer/Dryer"}
+        ],
+    }
+
+
 def test_soft_preference_negated_text_is_not_supported(monkeypatch):
     rows = [
         _listing(

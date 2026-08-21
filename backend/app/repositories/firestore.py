@@ -8,11 +8,15 @@ import hmac
 from typing import Any
 
 from backend.app.repositories.base import (
+    DEFAULT_CONVERSATION_LIST_LIMIT,
+    MAX_CONVERSATION_SCAN,
     ConversationMetadata,
     ConversationNotFoundError,
     ConversationOwnershipError,
     RepositoryUnavailableError,
     ShortlistItem,
+    ShortlistItemNotFoundError,
+    bounded_conversation_limit,
 )
 
 
@@ -50,6 +54,61 @@ class FirestoreConversationRepository:
             _document_id("conversation", conversation_id)
         )
 
+    def _list_sync(
+        self,
+        user_id: str,
+        limit: int,
+    ) -> list[ConversationMetadata]:
+        try:
+            requested_limit = bounded_conversation_limit(limit)
+            page_size = max(requested_limit, 20)
+            query = (
+                self._client.collection("conversations")
+                .where("ownerHash", "==", _owner_hash(user_id))
+                .order_by("updatedAt", direction="DESCENDING")
+            )
+            conversations: list[ConversationMetadata] = []
+            cursor = None
+            scanned = 0
+
+            while scanned < MAX_CONVERSATION_SCAN:
+                page_limit = min(page_size, MAX_CONVERSATION_SCAN - scanned)
+                page_query = query.limit(page_limit)
+                if cursor is not None:
+                    page_query = page_query.start_after(cursor)
+                page = list(page_query.stream())
+                if not page:
+                    break
+
+                scanned += len(page)
+                cursor = page[-1]
+                for document in page:
+                    conversation = self._from_data(
+                        document.to_dict() or {}, user_id=user_id
+                    )
+                    if conversation.turn_count > 0:
+                        conversations.append(conversation)
+                        if len(conversations) == requested_limit:
+                            return conversations
+
+                if len(page) < page_limit:
+                    break
+
+            return conversations
+        except ConversationOwnershipError:
+            raise
+        except Exception as exc:
+            raise RepositoryUnavailableError(
+                "Firestore could not list conversations."
+            ) from exc
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = DEFAULT_CONVERSATION_LIST_LIMIT,
+    ) -> list[ConversationMetadata]:
+        return await asyncio.to_thread(self._list_sync, user_id, limit)
+
     @staticmethod
     def _from_data(
         data: dict[str, Any], *, user_id: str
@@ -61,6 +120,7 @@ class FirestoreConversationRepository:
             )
         now = _now()
         listings = data.get("lastListings", [])
+        comparison = data.get("lastComparison")
         return ConversationMetadata(
             conversation_id=str(data.get("conversationId", "")),
             user_id=user_id,
@@ -77,6 +137,9 @@ class FirestoreConversationRepository:
             ),
             last_route_listing_id=_string_or_none(
                 data.get("lastRouteListingId")
+            ),
+            last_comparison=(
+                deepcopy(comparison) if isinstance(comparison, dict) else None
             ),
         )
 
@@ -113,6 +176,7 @@ class FirestoreConversationRepository:
                     "lastListings": [],
                     "lastCommuteStatus": None,
                     "lastRouteListingId": None,
+                    "lastComparison": None,
                 }
                 transaction.set(document, data)
                 return data
@@ -159,7 +223,8 @@ class FirestoreConversationRepository:
         conversation_id: str,
         user_id: str,
         *,
-        listings: list[dict[str, Any]],
+        listings: list[dict[str, Any]] | None,
+        comparison: dict[str, Any] | None = None,
         commute_status: str | None,
         route_listing_id: str | None,
     ) -> ConversationMetadata:
@@ -188,10 +253,13 @@ class FirestoreConversationRepository:
                     "schemaVersion": _SCHEMA_VERSION,
                     "updatedAt": _now(),
                     "turnCount": max(int(data.get("turnCount", 0)), 0) + 1,
-                    "lastListings": deepcopy(listings[:24]),
                     "lastCommuteStatus": commute_status,
                     "lastRouteListingId": route_listing_id,
                 }
+                if listings is not None:
+                    updated["lastListings"] = deepcopy(listings[:24])
+                if comparison is not None:
+                    updated["lastComparison"] = deepcopy(comparison)
                 transaction.set(document, updated)
                 return updated
 
@@ -208,7 +276,8 @@ class FirestoreConversationRepository:
         conversation_id: str,
         user_id: str,
         *,
-        listings: list[dict[str, Any]],
+        listings: list[dict[str, Any]] | None,
+        comparison: dict[str, Any] | None = None,
         commute_status: str | None,
         route_listing_id: str | None,
     ) -> ConversationMetadata:
@@ -217,6 +286,7 @@ class FirestoreConversationRepository:
             conversation_id,
             user_id,
             listings=listings,
+            comparison=comparison,
             commute_status=commute_status,
             route_listing_id=route_listing_id,
         )
@@ -250,6 +320,7 @@ class FirestoreShortlistRepository:
                 data.get("sourceConversationId", "")
             ),
             listing_snapshot=deepcopy(snapshot),
+            note=_string_or_none(data.get("note")),
             saved_at=_datetime(data.get("savedAt"), now),
             updated_at=_datetime(data.get("updatedAt"), now),
         )
@@ -295,6 +366,7 @@ class FirestoreShortlistRepository:
                     "listingId": listing_id,
                     "sourceConversationId": source_conversation_id,
                     "listingSnapshot": deepcopy(listing_snapshot),
+                    "note": existing_data.get("note"),
                     "savedAt": existing_data.get("savedAt", now),
                     "updatedAt": now,
                 }
@@ -321,6 +393,47 @@ class FirestoreShortlistRepository:
             listing_id=listing_id,
             source_conversation_id=source_conversation_id,
             listing_snapshot=listing_snapshot,
+        )
+
+    def _update_note_sync(
+        self, user_id: str, listing_id: str, note: str | None
+    ) -> ShortlistItem:
+        try:
+            from firebase_admin import firestore
+
+            document = self._document(user_id, listing_id)
+            transaction = self._client.transaction()
+
+            @firestore.transactional
+            def update_note(transaction):
+                snapshot = document.get(transaction=transaction)
+                if not snapshot.exists:
+                    raise ShortlistItemNotFoundError(
+                        "Shortlist item was not found."
+                    )
+                data = snapshot.to_dict() or {}
+                updated = {
+                    **data,
+                    "schemaVersion": _SCHEMA_VERSION,
+                    "note": note,
+                    "updatedAt": _now(),
+                }
+                transaction.set(document, updated)
+                return updated
+
+            return self._from_data(update_note(transaction))
+        except ShortlistItemNotFoundError:
+            raise
+        except Exception as exc:
+            raise RepositoryUnavailableError(
+                "Firestore could not update the shortlist item."
+            ) from exc
+
+    async def update_note(
+        self, user_id: str, listing_id: str, note: str | None
+    ) -> ShortlistItem:
+        return await asyncio.to_thread(
+            self._update_note_sync, user_id, listing_id, note
         )
 
     def _remove_sync(self, user_id: str, listing_id: str) -> None:

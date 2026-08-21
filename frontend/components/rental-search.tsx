@@ -23,6 +23,7 @@ import { SearchComposer } from "@/components/search-composer";
 import { useRecentSearches } from "@/hooks/use-recent-searches";
 import { useRouteSelection } from "@/hooks/use-route-selection";
 import {
+  compareListings,
   getShortlist,
   removeShortlistItem,
   saveShortlistItem,
@@ -38,6 +39,7 @@ import {
 } from "@/lib/firebase-auth";
 import type {
   AgentMode,
+  CanonicalComparison,
   CommuteEvaluation,
   Listing,
   RecentSearch,
@@ -98,6 +100,10 @@ export function RentalSearch() {
   const [savedListings, setSavedListings] = useState<Listing[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showComparison, setShowComparison] = useState(false);
+  const [comparison, setComparison] = useState<CanonicalComparison>();
+  const [comparisonExplanation, setComparisonExplanation] = useState<string>();
+  const [comparisonError, setComparisonError] = useState<string>();
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [mode, setMode] = useState<AgentMode>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -113,6 +119,7 @@ export function RentalSearch() {
   const [authFormError, setAuthFormError] = useState<string>();
   const [authFormStatus, setAuthFormStatus] = useState<string>();
   const requestRef = useRef<AbortController | null>(null);
+  const comparisonRequestRef = useRef<AbortController | null>(null);
   const shortlistRequestRef = useRef<AbortController | null>(null);
   const activeFirebaseUidRef = useRef<string | undefined>(undefined);
   const identityGenerationRef = useRef(0);
@@ -134,6 +141,8 @@ export function RentalSearch() {
 
   function resetForFirebaseBoundary(nextUid?: string) {
     abortChatRequest();
+    comparisonRequestRef.current?.abort();
+    comparisonRequestRef.current = null;
     shortlistRequestRef.current?.abort();
     shortlistRequestRef.current = null;
     routeSelection.reset();
@@ -149,6 +158,10 @@ export function RentalSearch() {
     setSavedListings([]);
     setCompareIds([]);
     setShowComparison(false);
+    setComparison(undefined);
+    setComparisonExplanation(undefined);
+    setComparisonError(undefined);
+    setComparisonLoading(false);
     setMode(undefined);
     setError(undefined);
     setNotice(undefined);
@@ -203,6 +216,7 @@ export function RentalSearch() {
 
   useEffect(() => () => {
     abortChatRequest();
+    comparisonRequestRef.current?.abort();
     shortlistRequestRef.current?.abort();
   }, []);
 
@@ -232,6 +246,7 @@ export function RentalSearch() {
     const identityGeneration = identityGenerationRef.current;
     const controller = new AbortController();
     abortChatRequest();
+    comparisonRequestRef.current?.abort();
     routeSelection.reset();
     setHighlightedListingId(undefined);
     requestRef.current = controller;
@@ -257,6 +272,10 @@ export function RentalSearch() {
       setHighlightedListingId(undefined);
       setCompareIds([]);
       setShowComparison(false);
+      setComparison(undefined);
+      setComparisonExplanation(undefined);
+      setComparisonError(undefined);
+      setComparisonLoading(false);
       setTurns((current) => [
         ...current,
         { id: turnId("agent"), role: "agent", text: response.message },
@@ -367,6 +386,7 @@ export function RentalSearch() {
 
   function startNewSearch() {
     abortChatRequest();
+    comparisonRequestRef.current?.abort();
     setConversationId(undefined);
     setTurns([]);
     setListings([]);
@@ -376,6 +396,10 @@ export function RentalSearch() {
     setHighlightedListingId(undefined);
     setCompareIds([]);
     setShowComparison(false);
+    setComparison(undefined);
+    setComparisonExplanation(undefined);
+    setComparisonError(undefined);
+    setComparisonLoading(false);
     setMode(undefined);
     setError(undefined);
     setNotice("New search ready.");
@@ -386,6 +410,8 @@ export function RentalSearch() {
 
   function restoreRecentSearch(search: RecentSearch, continueSearch: boolean) {
     abortChatRequest();
+    comparisonRequestRef.current?.abort();
+    comparisonRequestRef.current = null;
     routeSelection.reset();
     setDraft("");
     setConversationId(search.conversationId);
@@ -396,6 +422,10 @@ export function RentalSearch() {
     setHighlightedListingId(undefined);
     setCompareIds([]);
     setShowComparison(false);
+    setComparison(undefined);
+    setComparisonExplanation(undefined);
+    setComparisonError(undefined);
+    setComparisonLoading(false);
     setMode(undefined);
     setError(undefined);
     setNotice(undefined);
@@ -446,6 +476,11 @@ export function RentalSearch() {
   }
 
   function toggleComparison(listing: Listing) {
+    comparisonRequestRef.current?.abort();
+    setComparison(undefined);
+    setComparisonExplanation(undefined);
+    setComparisonError(undefined);
+    setComparisonLoading(false);
     if (compareIds.includes(listing.id)) {
       setCompareIds((current) => current.filter((id) => id !== listing.id));
       setShowComparison(false);
@@ -458,6 +493,44 @@ export function RentalSearch() {
     }
     setCompareIds((current) => [...current, listing.id]);
     setNotice("Added to comparison.");
+  }
+
+  async function openComparison() {
+    if (!conversationId || compareIds.length < 2) return;
+    const identityGeneration = identityGenerationRef.current;
+    const controller = new AbortController();
+    comparisonRequestRef.current?.abort();
+    comparisonRequestRef.current = controller;
+    setShowComparison(true);
+    setComparisonLoading(true);
+    setComparisonError(undefined);
+    try {
+      const response = await compareListings(compareIds, conversationId, {
+        signal: controller.signal,
+      });
+      if (comparisonRequestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
+      const refreshedById = new Map(
+        response.listings.map((listing) => [listing.id, listing]),
+      );
+      setListings((current) =>
+        current.map((listing) => refreshedById.get(listing.id) ?? listing),
+      );
+      setComparison(response.comparison);
+      setComparisonExplanation(response.message);
+    } catch (caught) {
+      if (comparisonRequestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
+      if (caught instanceof Error && caught.name === "AbortError") return;
+      setComparisonError(
+        caught instanceof Error
+          ? caught.message
+          : "The comparison could not be prepared.",
+      );
+    } finally {
+      if (comparisonRequestRef.current === controller) {
+        comparisonRequestRef.current = null;
+        setComparisonLoading(false);
+      }
+    }
   }
 
   const selectOnMap = useCallback((listing: Listing) => {
@@ -655,7 +728,7 @@ export function RentalSearch() {
                 hasConversation={false}
                 loading={loading}
                 onDraftChange={setDraft}
-                onShowComparison={() => setShowComparison(true)}
+                onShowComparison={() => void openComparison()}
                 onSubmit={submit}
                 textareaRef={textareaRef}
                 welcome
@@ -751,7 +824,14 @@ export function RentalSearch() {
               ) : null}
 
               {showComparison && comparisonListings.length >= 2 ? (
-                <ComparisonPanel listings={comparisonListings} onClose={() => setShowComparison(false)} />
+                <ComparisonPanel
+                  listings={comparisonListings}
+                  comparison={comparison}
+                  explanation={comparisonExplanation}
+                  loading={comparisonLoading}
+                  error={comparisonError}
+                  onClose={() => setShowComparison(false)}
+                />
               ) : null}
                   </section>
                   <SearchComposer
@@ -761,7 +841,7 @@ export function RentalSearch() {
                     hasConversation={Boolean(conversationId)}
                     loading={loading}
                     onDraftChange={setDraft}
-                    onShowComparison={() => setShowComparison(true)}
+                    onShowComparison={() => void openComparison()}
                     onSubmit={submit}
                     textareaRef={textareaRef}
                   />

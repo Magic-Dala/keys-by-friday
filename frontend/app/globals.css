@@ -1532,6 +1532,24 @@ p {
   margin-top: 36px;
 }
 
+.comparisonNotice,
+.comparisonExplanation {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background: var(--color-surface-muted);
+}
+
+.comparisonError {
+  color: var(--color-danger, #9f2f27);
+}
+
+.comparisonExplanation p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
 .iconButton {
   width: 44px;
   height: 44px;
@@ -1588,6 +1606,23 @@ p {
 .comparisonColumn .sourceLink {
   width: 100%;
   margin: 0;
+}
+
+.comparisonEvidence {
+  margin: 0 0 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-line);
+}
+
+.comparisonEvidence ul {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.comparisonUnknowns {
+  color: var(--color-copy);
 }
 
 .composerDock {

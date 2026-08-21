@@ -1,9 +1,19 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    status,
+)
 
 from backend.app.auth import AuthenticatedUser, get_current_user
 from backend.app.models.search import (
+    ComparisonRequest,
+    RecentSearchesResponse,
     RouteDetailResponse,
     SaveShortlistRequest,
     SearchRequest,
@@ -11,6 +21,11 @@ from backend.app.models.search import (
     SelectedRouteRequest,
     ShortlistItemResponse,
     ShortlistResponse,
+    UpdateShortlistRequest,
+)
+from backend.app.repositories.base import (
+    DEFAULT_CONVERSATION_LIST_LIMIT,
+    MAX_CONVERSATION_LIST_LIMIT,
 )
 from backend.app.services.agent_service import (
     AgentService,
@@ -19,10 +34,16 @@ from backend.app.services.agent_service import (
     PersistenceUnavailableError,
     get_agent_service,
 )
+from backend.app.services.conversation_service import (
+    ConversationService,
+    RecentSearchesPersistenceUnavailableError,
+    get_conversation_service,
+)
 from backend.app.services.shortlist_service import (
     ShortlistConversationAccessError,
     ShortlistConversationNotFoundError,
     ShortlistListingNotFoundError,
+    ShortlistItemMissingError,
     ShortlistPersistenceUnavailableError,
     ShortlistService,
     get_shortlist_service,
@@ -88,6 +109,58 @@ async def selected_route(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Route service is temporarily unavailable.",
+        ) from exc
+
+
+@router.get(
+    "/conversations",
+    response_model=RecentSearchesResponse,
+    tags=["conversations"],
+)
+async def list_conversations(
+    limit: int = Query(
+        default=DEFAULT_CONVERSATION_LIST_LIMIT,
+        ge=1,
+        le=MAX_CONVERSATION_LIST_LIMIT,
+    ),
+    user: AuthenticatedUser = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+) -> RecentSearchesResponse:
+    try:
+        return await service.list_for_user(user.uid, limit=limit)
+    except RecentSearchesPersistenceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Conversation storage is temporarily unavailable.",
+        ) from exc
+
+
+@router.post("/compare", response_model=SearchResponse, tags=["comparison"])
+async def compare_listings(
+    request: ComparisonRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    service: AgentService = Depends(get_agent_service),
+) -> SearchResponse:
+    try:
+        return await service.compare_listings(
+            request.listingIds,
+            request.conversationId,
+            user_id=user.uid,
+        )
+    except ConversationAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This conversation belongs to a different user.",
+        ) from exc
+    except PersistenceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Conversation storage is temporarily unavailable.",
+        ) from exc
+    except AgentServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Rental comparison is temporarily unavailable.",
         ) from exc
 
 
@@ -157,6 +230,31 @@ async def remove_shortlist_item(
     try:
         await service.remove(user.uid, listing_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except ShortlistPersistenceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Shortlist storage is temporarily unavailable.",
+        ) from exc
+
+
+@router.patch(
+    "/shortlist/{listing_id:path}",
+    response_model=ShortlistItemResponse,
+    tags=["shortlist"],
+)
+async def update_shortlist_item(
+    request: UpdateShortlistRequest,
+    listing_id: Annotated[str, Path(min_length=1, max_length=256)],
+    user: AuthenticatedUser = Depends(get_current_user),
+    service: ShortlistService = Depends(get_shortlist_service),
+) -> ShortlistItemResponse:
+    try:
+        return await service.update_note(user.uid, listing_id, request.note)
+    except ShortlistItemMissingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The shortlist item was not found.",
+        ) from exc
     except ShortlistPersistenceUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

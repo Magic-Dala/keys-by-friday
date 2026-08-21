@@ -8,7 +8,7 @@
 Browser
 → Next.js Frontend
 → Firebase Authentication (anonymous MVP identity)
-→ POST /api/chat or /api/route with Firebase ID token
+→ POST /api/chat, /api/route, or /api/compare with Firebase ID token
 → FastAPI Backend
 → Firebase Admin token verification
 → FastAPI Backend
@@ -60,6 +60,7 @@ not an in-progress heartbeat.
 - translate ADK lifecycle/activity metadata if a progress transport is implemented
 - verify Firebase identity and bind conversations to the verified uid
 - persist conversation metadata and shortlist snapshots through repository interfaces
+- persist canonical listing snapshots and deterministic comparison records
 - select and operate the ADK session service used for conversational continuity
 
 The backend is an adapter, not a second rental-decision engine.
@@ -82,6 +83,7 @@ The backend is an adapter, not a second rental-decision engine.
 
 - Frontend does not import Google ADK or Python modules.
 - Backend does not duplicate Agent search, ranking, or provider logic.
+- Gemini may explain structured comparisons but is not a rental-fact source.
 - Backend never trusts a user ID supplied by browser data.
 - Frontend never accesses Firestore directly; it uses authenticated FastAPI routes.
 - Firestore persistence does not duplicate Agent, provider, ranking, or Maps logic.
