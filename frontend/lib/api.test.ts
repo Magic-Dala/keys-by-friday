@@ -139,14 +139,37 @@ it("parses the full commute evaluation status contract", async () => {
   ]);
 });
 
-it("passes abort errors through to the caller", async () => {
-  const abortError = new Error("The request was aborted");
-  abortError.name = "AbortError";
-  vi.mocked(fetch).mockRejectedValue(abortError);
+it("honors caller abort while Firebase token lookup is stalled", async () => {
+  getFirebaseIdTokenMock.mockImplementation(() => new Promise(() => undefined));
+  const controller = new AbortController();
+  const request = getRecentSearches({ signal: controller.signal });
+  const requestFailure = expect(request).rejects.toMatchObject({
+    name: "AbortError",
+  });
 
-  await expect(getRecentSearches({ signal: new AbortController().signal })).rejects.toBe(
-    abortError,
-  );
+  controller.abort();
+
+  await requestFailure;
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("times out when Firebase token lookup never resolves", async () => {
+  vi.useFakeTimers();
+  try {
+    getFirebaseIdTokenMock.mockImplementation(() => new Promise(() => undefined));
+    const request = getRecentSearches();
+    const requestFailure = expect(request).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Recent searches request timed out. Try again.",
+    });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await requestFailure;
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("times out a never-resolving recent-search request and aborts it", async () => {
@@ -158,6 +181,36 @@ it("times out a never-resolving recent-search request and aborts it", async () =
       return new Promise<Response>(() => undefined);
     });
 
+    const request = getRecentSearches();
+    const requestFailure = expect(request).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Recent searches request timed out. Try again.",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await requestFailure;
+    expect(requestSignal?.aborted).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the timeout active while the recent-search response body is stalled", async () => {
+  vi.useFakeTimers();
+  try {
+    const stalledResponse = response({ items: [] });
+    vi.spyOn(stalledResponse, "json").mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    let requestSignal: AbortSignal | null | undefined;
+    vi.mocked(fetch).mockImplementation((_input, init) => {
+      requestSignal = init?.signal;
+      return Promise.resolve(stalledResponse);
+    });
     const request = getRecentSearches();
     const requestFailure = expect(request).rejects.toMatchObject({
       name: "ApiError",
