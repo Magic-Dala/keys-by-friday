@@ -149,6 +149,33 @@ it("passes abort errors through to the caller", async () => {
   );
 });
 
+it("times out a never-resolving recent-search request and aborts it", async () => {
+  vi.useFakeTimers();
+  try {
+    let requestSignal: AbortSignal | null | undefined;
+    vi.mocked(fetch).mockImplementation((_input, init) => {
+      requestSignal = init?.signal;
+      return new Promise<Response>(() => undefined);
+    });
+
+    const request = getRecentSearches();
+    const requestFailure = expect(request).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Recent searches request timed out. Try again.",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await requestFailure;
+    expect(requestSignal?.aborted).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("normalizes recent-search HTTP failures using ApiError", async () => {
   vi.mocked(fetch).mockResolvedValue(response({ detail: "Recent searches are unavailable." }, 503));
 

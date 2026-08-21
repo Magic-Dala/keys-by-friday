@@ -8,6 +8,7 @@ interface RecentSearchesState {
   items: RecentSearch[];
   loading: boolean;
   error?: string;
+  accountKey?: string;
 }
 
 const emptyState: RecentSearchesState = {
@@ -30,7 +31,7 @@ export function useRecentSearches(authUser: User | null | undefined) {
       requestRef.current = null;
       identityGenerationRef.current += 1;
       activeAccountKeyRef.current = accountKey;
-      setState({ items: [], loading: Boolean(accountKey) });
+      setState({ items: [], loading: Boolean(accountKey), accountKey });
     }
 
     if (!accountKey) return;
@@ -39,7 +40,12 @@ export function useRecentSearches(authUser: User | null | undefined) {
     const controller = new AbortController();
     requestRef.current?.abort();
     requestRef.current = controller;
-    setState((current) => ({ ...current, loading: true, error: undefined }));
+    setState((current) => ({
+      ...current,
+      accountKey,
+      loading: true,
+      error: undefined,
+    }));
 
     getRecentSearches({ signal: controller.signal })
       .then((response) => {
@@ -48,7 +54,7 @@ export function useRecentSearches(authUser: User | null | undefined) {
           activeAccountKeyRef.current !== accountKey ||
           identityGenerationRef.current !== identityGeneration
         ) return;
-        setState({ items: response.items, loading: false });
+        setState({ items: response.items, loading: false, accountKey });
       })
       .catch((caught) => {
         if (
@@ -59,6 +65,7 @@ export function useRecentSearches(authUser: User | null | undefined) {
         ) return;
         setState((current) => ({
           ...current,
+          accountKey,
           loading: false,
           error: caught instanceof Error
             ? caught.message
@@ -77,5 +84,9 @@ export function useRecentSearches(authUser: User | null | undefined) {
     setRefreshNonce((current) => current + 1);
   }, [accountKey]);
 
-  return { ...state, refresh };
+  const visibleState = state.accountKey === accountKey
+    ? state
+    : { items: [], loading: Boolean(accountKey), error: undefined };
+
+  return { ...visibleState, refresh };
 }

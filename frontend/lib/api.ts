@@ -21,6 +21,7 @@ import type {
 const backendUrl = (
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
 ).replace(/\/+$/, "");
+const RECENT_SEARCHES_TIMEOUT_MS = 10_000;
 
 export class ApiError extends Error {
   constructor(
@@ -545,17 +546,40 @@ export async function getRecentSearches(
   options: { signal?: AbortSignal } = {},
 ): Promise<RecentSearchResponse> {
   const headers = await authenticatedHeaders();
+  const requestController = new AbortController();
+  let didTimeout = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const abortFromCaller = () => requestController.abort();
+  if (options.signal) {
+    if (options.signal.aborted) requestController.abort();
+    else options.signal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
   let response: Response;
   try {
-    response = await fetch(`${backendUrl}/api/conversations?limit=20`, {
+    const request = fetch(`${backendUrl}/api/conversations?limit=20`, {
       method: "GET",
       headers,
       cache: "no-store",
-      signal: options.signal,
+      signal: requestController.signal,
     });
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        didTimeout = true;
+        requestController.abort();
+        reject(new ApiError("Recent searches request timed out. Try again."));
+      }, RECENT_SEARCHES_TIMEOUT_MS);
+    });
+    response = await Promise.race([request, timeout]);
   } catch (caught) {
+    if (didTimeout) {
+      throw new ApiError("Recent searches request timed out. Try again.");
+    }
     if (caught instanceof Error && caught.name === "AbortError") throw caught;
     throw new ApiError("Can’t reach recent searches. Check that the backend is running.");
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    options.signal?.removeEventListener("abort", abortFromCaller);
   }
   if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
 
