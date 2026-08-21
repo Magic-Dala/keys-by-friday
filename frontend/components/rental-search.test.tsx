@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -270,6 +270,105 @@ it("shows the Google account identity and signs out to a fresh anonymous session
   await user.click(screen.getByRole("button", { name: "Sign Out" }));
 
   expect(signOutToAnonymous).toHaveBeenCalledTimes(1);
+});
+
+it("preserves rental state when an anonymous user is linked without changing UID", async () => {
+  let notifyAuthChange: ((user: unknown) => void) | undefined;
+  const linkedUser = {
+    uid: "anon-1",
+    isAnonymous: false,
+    displayName: "Ada Lovelace",
+    email: "ada@example.com",
+  };
+  const secondListing = {
+    id: "two",
+    title: "Birchwood",
+    latitude: 37.5,
+    longitude: -122.2,
+    commute: { destination: "Google", mode: "DRIVE" as const, durationMinutes: 22, status: "available" as const },
+  };
+
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    notifyAuthChange = listener as (user: unknown) => void;
+    listener({ uid: "anon-1", isAnonymous: true, displayName: null, email: null } as never);
+    return vi.fn();
+  });
+  vi.mocked(getShortlist).mockResolvedValue({
+    items: [{ listing: searchResponse.listings[0], sourceConversationId: "conversation-anon", savedAt: "", updatedAt: "" }],
+  });
+  vi.mocked(sendChat).mockResolvedValue({
+    ...searchResponse,
+    conversationId: "conversation-anon",
+    listings: [searchResponse.listings[0], secondListing],
+  });
+
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+
+  await user.type(screen.getByLabelText("Describe your ideal rental"), "Find two homes");
+  await user.click(screen.getByRole("button", { name: "Ask rental agent" }));
+  expect(await screen.findByRole("heading", { name: "Heatherstone" })).toBeVisible();
+  expect(screen.getByText("1 saved")).toBeVisible();
+
+  await user.click(screen.getAllByRole("button", { name: "Compare" })[0]);
+  await user.click(screen.getAllByRole("button", { name: "Compare" })[0]);
+  await user.click(screen.getByRole("button", { name: "Compare homes" }));
+  expect(screen.getByRole("heading", { name: "Compare the details that matter" })).toBeVisible();
+
+  await act(async () => notifyAuthChange?.(linkedUser));
+
+  expect(screen.getByText("I found one strong match.")).toBeVisible();
+  expect(screen.getAllByRole("heading", { name: "Heatherstone" })).toHaveLength(2);
+  expect(screen.getByRole("heading", { name: "Compare the details that matter" })).toBeVisible();
+  expect(getShortlist).toHaveBeenCalledTimes(1);
+});
+
+it("resets rental state and refetches the shortlist when UID changes", async () => {
+  let notifyAuthChange: ((user: unknown) => void) | undefined;
+  const secondListing = {
+    id: "two",
+    title: "Birchwood",
+    latitude: 37.5,
+    longitude: -122.2,
+    commute: { destination: "Google", mode: "DRIVE" as const, durationMinutes: 22, status: "available" as const },
+  };
+
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    notifyAuthChange = listener as (user: unknown) => void;
+    listener({ uid: "anon-1", isAnonymous: true, displayName: null, email: null } as never);
+    return vi.fn();
+  });
+  vi.mocked(getShortlist)
+    .mockResolvedValueOnce({
+      items: [{ listing: searchResponse.listings[0], sourceConversationId: "conversation-anon", savedAt: "", updatedAt: "" }],
+    })
+    .mockResolvedValueOnce({ items: [] });
+  vi.mocked(sendChat).mockResolvedValue({
+    ...searchResponse,
+    conversationId: "conversation-anon",
+    listings: [searchResponse.listings[0], secondListing],
+  });
+
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+
+  await user.type(screen.getByLabelText("Describe your ideal rental"), "Find two homes");
+  await user.click(screen.getByRole("button", { name: "Ask rental agent" }));
+  expect(await screen.findByRole("heading", { name: "Heatherstone" })).toBeVisible();
+  expect(screen.getByText("1 saved")).toBeVisible();
+
+  await user.click(screen.getAllByRole("button", { name: "Compare" })[0]);
+  await user.click(screen.getAllByRole("button", { name: "Compare" })[0]);
+  await user.click(screen.getByRole("button", { name: "Compare homes" }));
+  expect(screen.getByRole("heading", { name: "Compare the details that matter" })).toBeVisible();
+
+  await act(async () => notifyAuthChange?.({ uid: "email-2", isAnonymous: false, displayName: "Grace Hopper", email: "grace@example.com" }));
+
+  await waitFor(() => expect(getShortlist).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("I found one strong match.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Heatherstone" })).not.toBeInTheDocument();
+  expect(screen.getByText("Nothing saved yet")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Compare the details that matter" })).not.toBeInTheDocument();
 });
 
 afterEach(() => {
