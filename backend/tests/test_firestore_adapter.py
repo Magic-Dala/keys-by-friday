@@ -300,9 +300,14 @@ def test_firestore_conversation_list_pages_past_zero_turn_records() -> None:
     _seed_conversation_document(
         client, "new-success", "user-a", start + timedelta(minutes=1), 1
     )
-    _seed_conversation_document(
-        client, "new-zero-turn", "user-a", start + timedelta(minutes=2), 0
-    )
+    for index in range(20):
+        _seed_conversation_document(
+            client,
+            f"new-zero-turn-{index}",
+            "user-a",
+            start + timedelta(minutes=index + 2),
+            0,
+        )
 
     async def scenario():
         repository = FirestoreConversationRepository(client)
@@ -314,5 +319,29 @@ def test_firestore_conversation_list_pages_past_zero_turn_records() -> None:
         "new-success",
         "old-success",
     ]
-    assert client.query_limits == [2, 2]
+    assert client.query_limits == [20, 20]
+    assert client.start_after_calls == 1
+
+
+def test_firestore_conversation_list_uses_batch_pages_for_small_limits() -> None:
+    client = _FakeFirestoreClient()
+    start = datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc)
+    for index in range(21):
+        _seed_conversation_document(
+            client,
+            f"new-zero-turn-{index}",
+            "user-a",
+            start + timedelta(minutes=index + 1),
+            0,
+        )
+    _seed_conversation_document(client, "old-success", "user-a", start, 1)
+
+    async def scenario():
+        repository = FirestoreConversationRepository(client)
+        return await repository.list_for_user("user-a", limit=1)
+
+    items = asyncio.run(scenario())
+
+    assert [item.conversation_id for item in items] == ["old-success"]
+    assert client.query_limits == [20, 20]
     assert client.start_after_calls == 1

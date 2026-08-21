@@ -60,7 +60,7 @@ class FirestoreConversationRepository:
     ) -> list[ConversationMetadata]:
         try:
             requested_limit = bounded_conversation_limit(limit)
-            page_size = requested_limit
+            page_size = max(requested_limit, 20)
             query = (
                 self._client.collection("conversations")
                 .where("ownerHash", "==", _owner_hash(user_id))

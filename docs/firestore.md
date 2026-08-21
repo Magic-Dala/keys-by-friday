@@ -444,10 +444,10 @@ checked in as `firestore.indexes.json` and wired into `firebase.json`:
 }
 ```
 
-The query never uses a raw Firebase UID. It pages using the requested bounded
-limit, carries the last Firestore document snapshot as the cursor, and scans at
-most 200 documents before excluding zero-turn records and returning the
-successful results collected so far.
+The query never uses a raw Firebase UID. It pages with an internal batch size
+of at least 20 documents, carries the last Firestore document snapshot as the
+cursor, and scans at most 200 documents before excluding zero-turn records and
+returning up to the requested successful results.
 
 ## Common results
 
