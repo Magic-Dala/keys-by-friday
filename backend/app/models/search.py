@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,6 +44,25 @@ class CommuteEvaluationResponse(BaseModel):
 class RouteDetailResponse(CommuteResponse):
     listingId: str
     encodedPolyline: str | None = None
+
+
+class ComparisonResultResponse(BaseModel):
+    listingId: str
+    hardConstraintStatus: Literal["pass", "fail", "evidence_only", "unknown"]
+    satisfiesCurrentRequirements: bool | None = None
+    softPreferenceEvidence: list[dict[str, Any]] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)
+    comparisonUnknowns: list[str] = Field(default_factory=list)
+    decisionUnknowns: list[str] = Field(default_factory=list)
+    decisionReady: bool = False
+    score: float | None = None
+    rank: int | None = None
+
+
+class ComparisonResponse(BaseModel):
+    schemaVersion: Literal["kbf.canonical-comparison.v1"]
+    listingIds: list[str] = Field(default_factory=list)
+    results: list[ComparisonResultResponse] = Field(default_factory=list)
 
 
 class SelectedRouteRequest(BaseModel):
@@ -118,6 +137,7 @@ class SearchResponse(BaseModel):
     listings: list[ListingResponse] = Field(default_factory=list)
     commuteEvaluation: CommuteEvaluationResponse | None = None
     route: RouteDetailResponse | None = None
+    comparison: ComparisonResponse | None = None
     mode: Literal["adk", "stub"]
 
 
