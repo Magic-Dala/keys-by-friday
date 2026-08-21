@@ -39,6 +39,27 @@ export interface RouteDetail extends Commute {
   encodedPolyline?: string;
 }
 
+export type HardConstraintStatus = "pass" | "fail" | "evidence_only" | "unknown";
+
+export interface ComparisonResult {
+  listingId: string;
+  hardConstraintStatus: HardConstraintStatus;
+  satisfiesCurrentRequirements?: boolean;
+  softPreferenceEvidence: Record<string, unknown>[];
+  tradeoffs: string[];
+  comparisonUnknowns: string[];
+  decisionUnknowns: string[];
+  decisionReady: boolean;
+  score?: number;
+  rank?: number;
+}
+
+export interface Comparison {
+  schemaVersion: "kbf.canonical-comparison.v1";
+  listingIds: string[];
+  results: ComparisonResult[];
+}
+
 export interface SelectedRouteRequest {
   listingId: string;
   conversationId: string;

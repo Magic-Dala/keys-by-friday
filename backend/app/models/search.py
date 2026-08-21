@@ -123,6 +123,25 @@ class RouteDetailResponse(CommuteResponse):
     encodedPolyline: str | None = None
 
 
+class ComparisonResultResponse(BaseModel):
+    listingId: str
+    hardConstraintStatus: Literal["pass", "fail", "evidence_only", "unknown"]
+    satisfiesCurrentRequirements: bool | None = None
+    softPreferenceEvidence: list[dict[str, Any]] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)
+    comparisonUnknowns: list[str] = Field(default_factory=list)
+    decisionUnknowns: list[str] = Field(default_factory=list)
+    decisionReady: bool = False
+    score: float | None = None
+    rank: int | None = None
+
+
+class ComparisonResponse(BaseModel):
+    schemaVersion: Literal["kbf.canonical-comparison.v1"]
+    listingIds: list[str] = Field(default_factory=list)
+    results: list[ComparisonResultResponse] = Field(default_factory=list)
+
+
 class SelectedRouteRequest(BaseModel):
     listingId: str = Field(min_length=1, max_length=256)
     conversationId: str = Field(min_length=1, max_length=128)

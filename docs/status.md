@@ -121,7 +121,7 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 190 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 196 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12

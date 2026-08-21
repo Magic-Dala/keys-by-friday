@@ -16,6 +16,7 @@ from backend.app.models.search import (
     CanonicalComparisonResponse,
     CanonicalComparisonResultResponse,
     CanonicalListingResponse,
+    ComparisonResponse,
     CommuteEvaluationResponse,
     CommuteResponse,
     ListingResponse,
@@ -326,6 +327,17 @@ def _commute_evaluation_from_tool_payload(
         withinLimitCount=count("within_limit_count"),
         overLimitCount=count("over_limit_count"),
     )
+
+
+def _comparison_from_tool_payload(value: object) -> ComparisonResponse | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("schemaVersion") != _CANONICAL_COMPARISON_SCHEMA:
+        return None
+    try:
+        return ComparisonResponse.model_validate(value)
+    except ValueError:
+        return None
 
 
 def _route_from_tool_payload(value: object) -> RouteDetailResponse | None:
@@ -686,6 +698,18 @@ def _normalize_tool_listings(
     return results
 
 
+def _normalize_response_listings(
+    search_payload: dict[str, Any] | None,
+    detail_payloads: list[dict[str, Any]],
+    comparison_payload: dict[str, Any] | None,
+) -> list[ListingResponse]:
+    """Select the listing payload produced by the tool used on this turn."""
+
+    if comparison_payload is not None:
+        return _normalize_comparison_listings(comparison_payload)
+    return _normalize_tool_listings(search_payload, detail_payloads)
+
+
 class AgentService:
     def __init__(
         self,
@@ -784,6 +808,11 @@ class AgentService:
                         existing.last_listings, response.listings
                     )
                 )
+            elif response.listings:
+                listings_to_record = [
+                    listing.model_dump(mode="json")
+                    for listing in response.listings
+                ]
 
             await self._conversations.record_response(
                 response.conversationId,
@@ -966,10 +995,10 @@ class AgentService:
         return SearchResponse(
             conversationId=conversation_id,
             message=final_text,
-            listings=(
-                _normalize_tool_listings(search_payload, detail_payloads)
-                if search_payload is not None
-                else _normalize_comparison_listings(comparison_payload)
+            listings=_normalize_response_listings(
+                search_payload,
+                detail_payloads,
+                comparison_payload,
             ),
             commuteEvaluation=_commute_evaluation_from_tool_payload(
                 search_payload.get("commute_summary") if search_payload else None

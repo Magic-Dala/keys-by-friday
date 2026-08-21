@@ -279,6 +279,44 @@ def test_comparison_updates_selected_snapshots_without_dropping_results() -> Non
     assert response.listings[0].sourcePostings[0].id == "one"
 
 
+def test_detail_only_response_updates_persisted_listings() -> None:
+    conversations = MemoryConversationRepository()
+    service = AgentService(mode="stub", conversation_repository=conversations)
+    response = SearchResponse(
+        conversationId="conversation-1",
+        message="Here are the verified details.",
+        listings=[
+            ListingResponse(
+                id="detail-listing",
+                title="Detailed Home",
+                price=3250,
+                bedrooms=2,
+            )
+        ],
+        searchPerformed=False,
+        mode="adk",
+    )
+
+    async def scenario():
+        await conversations.claim("conversation-1", "user-a")
+        await conversations.record_response(
+            "conversation-1",
+            "user-a",
+            listings=[maps_listing()],
+            commute_status=None,
+            route_listing_id=None,
+        )
+        await service._record_conversation_response(response, user_id="user-a")
+        return await conversations.get_for_user("conversation-1", "user-a")
+
+    metadata = asyncio.run(scenario())
+
+    assert [item["id"] for item in metadata.last_listings] == [
+        "detail-listing"
+    ]
+    assert metadata.last_listings[0]["price"] == 3250
+
+
 def test_shortlist_http_contract_uses_fastapi_not_direct_firestore() -> None:
     conversations = MemoryConversationRepository()
     shortlist = MemoryShortlistRepository()
