@@ -17,8 +17,10 @@ import {
   SearchIcon,
 } from "@/components/icons";
 import { ListingCard } from "@/components/listing-card";
+import { RecentSearches } from "@/components/recent-searches";
 import { RentalMap } from "@/components/rental-map";
 import { SearchComposer } from "@/components/search-composer";
+import { useRecentSearches } from "@/hooks/use-recent-searches";
 import { useRouteSelection } from "@/hooks/use-route-selection";
 import {
   getShortlist,
@@ -38,6 +40,7 @@ import type {
   AgentMode,
   CommuteEvaluation,
   Listing,
+  RecentSearch,
 } from "@/types/search";
 
 const examplePrompts = [
@@ -54,6 +57,15 @@ interface Turn {
 
 function turnId(role: Turn["role"]) {
   return `${role}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function recentSearchDate(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "an earlier date";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 function useMobileViewport() {
@@ -89,6 +101,7 @@ export function RentalSearch() {
   const [mode, setMode] = useState<AgentMode>();
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [restoredSearchNotice, setRestoredSearchNotice] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>();
   const [authBusy, setAuthBusy] = useState(false);
@@ -105,6 +118,7 @@ export function RentalSearch() {
   const identityGenerationRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const routeSelection = useRouteSelection(conversationId);
+  const recentSearches = useRecentSearches(authUser);
   const isMobileViewport = useMobileViewport();
   const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
   const authIdentityKey = getAuthIdentityKey(authUser);
@@ -138,6 +152,7 @@ export function RentalSearch() {
     setMode(undefined);
     setError(undefined);
     setNotice(undefined);
+    setRestoredSearchNotice(undefined);
     setLoading(false);
   }
 
@@ -225,6 +240,7 @@ export function RentalSearch() {
     setLoading(true);
     setError(undefined);
     setNotice(undefined);
+    setRestoredSearchNotice(undefined);
 
     try {
       const response = await sendChat(
@@ -245,6 +261,7 @@ export function RentalSearch() {
         ...current,
         { id: turnId("agent"), role: "agent", text: response.message },
       ]);
+      void recentSearches.refresh();
     } catch (caught) {
       if (requestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
       if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -362,8 +379,31 @@ export function RentalSearch() {
     setMode(undefined);
     setError(undefined);
     setNotice("New search ready.");
+    setRestoredSearchNotice(undefined);
     setDraft("");
     requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  function restoreRecentSearch(search: RecentSearch, continueSearch: boolean) {
+    abortChatRequest();
+    routeSelection.reset();
+    setDraft("");
+    setConversationId(search.conversationId);
+    setTurns([]);
+    setListings(search.listings);
+    setCommuteEvaluation(undefined);
+    setMobileResultsView("list");
+    setHighlightedListingId(undefined);
+    setCompareIds([]);
+    setShowComparison(false);
+    setMode(undefined);
+    setError(undefined);
+    setNotice(undefined);
+    setRestoredSearchNotice(
+      `${continueSearch ? "Continuing your search" : "Showing the latest saved results"} from ${recentSearchDate(search.updatedAt)}.`,
+    );
+    setLoading(false);
+    if (continueSearch) requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
   async function toggleSaved(listing: Listing) {
@@ -438,8 +478,9 @@ export function RentalSearch() {
     const listing = knownListings.get(id);
     return listing ? [listing] : [];
   });
+  const hasActiveSearch = Boolean(conversationId) || turns.length > 0 || listings.length > 0;
   const journeyStage =
-    turns.length === 0 ? 0 : listings.length === 0 ? 0 : compareIds.length < 2 ? 1 : showComparison ? 3 : 2;
+    listings.length === 0 ? 0 : turns.length === 0 ? 1 : compareIds.length < 2 ? 1 : showComparison ? 3 : 2;
 
   return (
     <div className="appShell">
@@ -473,7 +514,7 @@ export function RentalSearch() {
               </button>
             </div>
           ) : null}
-          {turns.length ? (
+          {hasActiveSearch ? (
             <button className="quietButton" type="button" onClick={startNewSearch}>
               <PlusIcon className="buttonIcon" /> New search
             </button>
@@ -599,7 +640,7 @@ export function RentalSearch() {
 
       <div className="workspace">
         <main className="mainPanel" id="main-content">
-          {turns.length === 0 ? (
+          {!hasActiveSearch ? (
             <section className="welcome" aria-labelledby="page-title">
               <span className="heroEyebrow">Bay Area rentals · Agentic search</span>
               <h1 id="page-title">A better rental,<br />without the tab chaos.</h1>
@@ -653,6 +694,10 @@ export function RentalSearch() {
                 </div>
                 {mode ? <span className="modeBadge">{mode === "adk" ? "Live agent" : "Development mode"}</span> : null}
               </header>
+
+              {restoredSearchNotice ? (
+                <p className="restoredSearchNotice" role="status">{restoredSearchNotice}</p>
+              ) : null}
 
               <div className="thread">
                 {turns.map((turn) => (
@@ -754,6 +799,17 @@ export function RentalSearch() {
               ))}
             </ol>
           </section>
+
+          {authUser && !authUser.isAnonymous ? (
+            <RecentSearches
+              items={recentSearches.items}
+              loading={recentSearches.loading}
+              error={recentSearches.error}
+              onRetry={recentSearches.refresh}
+              onViewResults={(search) => restoreRecentSearch(search, false)}
+              onContinueSearch={(search) => restoreRecentSearch(search, true)}
+            />
+          ) : null}
 
           <section className="railCard shortlistCard">
             <div className="railCardHeading">

@@ -6,6 +6,8 @@ import type {
   CommuteEvaluation,
   Listing,
   RouteDetail,
+  RecentSearch,
+  RecentSearchResponse,
   SelectedRouteRequest,
   SearchRequest,
   SearchResponse,
@@ -205,6 +207,8 @@ function parseListing(value: unknown): Listing {
     title: optionalString(value.title, "listing title"),
     address: optionalString(value.address, "listing address"),
     price: optionalNumber(value.price, "listing price"),
+    priceMin: optionalNumber(value.priceMin, "listing minimum price"),
+    priceMax: optionalNumber(value.priceMax, "listing maximum price"),
     bedrooms: optionalNumber(value.bedrooms, "listing bedrooms"),
     bathrooms: optionalNumber(value.bathrooms, "listing bathrooms"),
     latitude: optionalNumber(value.latitude, "listing latitude"),
@@ -221,6 +225,52 @@ function parseListing(value: unknown): Listing {
         ? undefined
         : parseCommute(value.commute),
   };
+}
+
+function parseRecentSearch(value: unknown): RecentSearch {
+  if (
+    !isRecord(value) ||
+    typeof value.conversationId !== "string" ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string" ||
+    typeof value.turnCount !== "number" ||
+    !Number.isFinite(value.turnCount) ||
+    !Array.isArray(value.listings)
+  ) {
+    throw new ApiError("Invalid recent search in API response.");
+  }
+
+  const lastCommuteStatus = optionalString(
+    value.lastCommuteStatus,
+    "recent search commute status",
+  );
+  if (
+    lastCommuteStatus !== undefined &&
+    lastCommuteStatus !== "not_requested" &&
+    lastCommuteStatus !== "requires_input" &&
+    lastCommuteStatus !== "available" &&
+    lastCommuteStatus !== "partial" &&
+    lastCommuteStatus !== "unavailable" &&
+    lastCommuteStatus !== "unknown"
+  ) {
+    throw new ApiError("Invalid recent search commute status in API response.");
+  }
+
+  return {
+    conversationId: value.conversationId,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    turnCount: value.turnCount,
+    listings: value.listings.map(parseListing),
+    lastCommuteStatus: lastCommuteStatus as RecentSearch["lastCommuteStatus"],
+  };
+}
+
+function parseRecentSearchResponse(value: unknown): RecentSearchResponse {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new ApiError("Invalid recent searches response.");
+  }
+  return { items: value.items.map(parseRecentSearch) };
 }
 
 function parseSearchResponse(value: unknown): SearchResponse {
@@ -392,6 +442,33 @@ export async function getShortlist(
   }
   if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
   return parseShortlistResponse(await response.json());
+}
+
+export async function getRecentSearches(
+  options: { signal?: AbortSignal } = {},
+): Promise<RecentSearchResponse> {
+  const headers = await authenticatedHeaders();
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}/api/conversations?limit=20`, {
+      method: "GET",
+      headers,
+      cache: "no-store",
+      signal: options.signal,
+    });
+  } catch (caught) {
+    if (caught instanceof Error && caught.name === "AbortError") throw caught;
+    throw new ApiError("Can’t reach recent searches. Check that the backend is running.");
+  }
+  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ApiError("Backend returned invalid recent searches JSON.");
+  }
+  return parseRecentSearchResponse(payload);
 }
 
 export async function saveShortlistItem(

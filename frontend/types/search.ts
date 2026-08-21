@@ -72,6 +72,8 @@ export interface Listing {
   title?: string;
   address?: string;
   price?: number;
+  priceMin?: number;
+  priceMax?: number;
   bedrooms?: number;
   bathrooms?: number;
   latitude?: number;
@@ -99,6 +101,19 @@ export interface SearchResponse {
   route?: RouteDetail;
   comparison?: Comparison;
   mode: AgentMode;
+}
+
+export interface RecentSearch {
+  conversationId: string;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
+  listings: Listing[];
+  lastCommuteStatus?: CommuteEvaluation["status"];
+}
+
+export interface RecentSearchResponse {
+  items: RecentSearch[];
 }
 
 export interface ShortlistItem {
