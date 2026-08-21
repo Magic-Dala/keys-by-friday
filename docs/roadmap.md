@@ -16,7 +16,7 @@ Phase 1  Web integration                 ✅ Baseline complete
 Phase 2  Structured API listings[]       ✅ Baseline complete
 Phase 3  Frontend rental-result UX       🔄 Foundation complete; product polish next
 Phase 4  Commute / Maps evidence         🔄 Backend/API complete; live setup/UI pending
-Phase 5  Comparison + Shortlist          ⬜ Planned
+Phase 5  Comparison + Shortlist          ✅ Milestone 5 complete
 Phase 6  Demo polish + deployment        ⬜ Planned
 ```
 
@@ -116,11 +116,10 @@ Start with the smallest persistence scope justified by the product demo. Do not 
 
 The user can save, list, remove, and compare shortlisted properties without losing the original listing identity or verification evidence.
 
-Current implementation note: FastAPI now provides authenticated save/list/remove
+Current implementation note: FastAPI now provides authenticated save/list/update/remove
 routes backed by repository interfaces and Firestore, and saved snapshots retain
-available coordinate/commute evidence. Full ADK session restoration is now
-available through database session mode. Notes and user-authored reasons remain
-future refinements.
+available canonical, coordinate, and commute evidence. The web comparison uses
+the deterministic Agent tool result and keeps Gemini as the explanation layer.
 
 ---
 

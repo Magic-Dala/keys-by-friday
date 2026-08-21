@@ -38,9 +38,46 @@ Response:
   "conversationId": "server-created-or-existing-id",
   "message": "Agent response text",
   "listings": [],
+  "comparison": null,
+  "searchPerformed": true,
   "mode": "adk"
 }
 ```
+
+Each listing may add a `canonicalListing` object using
+`kbf.canonical-listing.v1`. Explicit JSON `null` values represent unknown facts
+and must not be converted to `false` or guessed values.
+
+## Comparison
+
+```http
+POST /api/compare
+Authorization: Bearer <Firebase-ID-token>
+Content-Type: application/json
+
+{
+  "listingIds": ["listing-1", "listing-2"],
+  "conversationId": "existing-conversation-id"
+}
+```
+
+Two to four unique listing IDs are allowed. The backend reuses the verified
+user's ADK conversation and returns `kbf.canonical-comparison.v1` in the
+`comparison` field of the normal response shape. `message` is Gemini's readable
+explanation; the structured comparison tool response is the fact source.
+
+The response's `listings` array contains the selected listings as refreshed by
+the Agent's comparison-time detail verification. For example, a policy that was
+unknown in the original search snapshot may now be `petsAllowed: true`. The
+frontend should merge these selected snapshots into its existing result cards by
+listing ID. It should not replace the whole result list, because unselected
+search results are intentionally absent from this comparison response.
+
+The backend performs the same merge in conversation persistence: selected
+snapshots are refreshed, unselected snapshots remain available, and existing
+card-only presentation fields are retained when detail verification does not
+return them. This is additive and does not change
+`kbf.canonical-comparison.v1`.
 
 `message` is trimmed by the backend, must not be blank, and is limited to 4,000 characters. `conversationId` is optional, limited to 128 characters, and should be returned to the backend on follow-up turns.
 
@@ -128,6 +165,17 @@ Authorization: Bearer <Firebase-ID-token>
 
 Removal is idempotent and returns HTTP `204`.
 
+```http
+PATCH /api/shortlist/{url-encoded-listing-id}
+Authorization: Bearer <Firebase-ID-token>
+Content-Type: application/json
+
+{"note":"Tour on Saturday"}
+```
+
+The note is optional, trimmed, and limited to 1,000 characters. Send `null` or
+an empty string to clear it.
+
 ## Listing
 
 ```ts
@@ -151,6 +199,7 @@ The backend may normalize internal Agent fields into this web shape.
 - `/api/chat` is the primary user interaction endpoint.
 - `/api/conversations` may list only lightweight metadata for the verified user.
 - `/api/route` may read only the verified user's conversation state.
+- `/api/compare` may compare only candidates in the verified user's conversation.
 - `/api/shortlist` may read or change only the verified user's shortlist.
 - The frontend never reads or writes Firestore directly.
 - Frontend does not depend on ADK internals.

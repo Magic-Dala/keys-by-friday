@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from backend.app.auth import AuthenticatedUser, get_current_user
 from backend.app.config import Settings, _persistence_mode
 from backend.app.main import create_app
-from backend.app.models.search import ListingResponse
+from backend.app.models.search import ListingResponse, SearchResponse
 from backend.app.repositories.base import (
     ConversationOwnershipError,
     RepositoryUnavailableError,
@@ -60,6 +60,18 @@ def test_memory_repositories_persist_metadata_maps_and_shortlist() -> None:
             commute_status="available",
             route_listing_id=None,
         )
+        comparison_metadata = await conversations.record_response(
+            "conversation-1",
+            "user-a",
+            listings=None,
+            comparison={
+                "schemaVersion": "kbf.canonical-comparison.v1",
+                "listingIds": ["listing/with:provider-id"],
+                "results": [],
+            },
+            commute_status=None,
+            route_listing_id=None,
+        )
         saved = await service.save(
             "user-a",
             conversation_id="conversation-1",
@@ -68,12 +80,14 @@ def test_memory_repositories_persist_metadata_maps_and_shortlist() -> None:
         listed = await service.list_for_user("user-a")
         await service.remove("user-a", "listing/with:provider-id")
         empty = await service.list_for_user("user-a")
-        return metadata, saved, listed, empty
+        return metadata, comparison_metadata, saved, listed, empty
 
-    metadata, saved, listed, empty = asyncio.run(scenario())
+    metadata, comparison_metadata, saved, listed, empty = asyncio.run(scenario())
 
     assert metadata.turn_count == 1
     assert metadata.last_commute_status == "available"
+    assert comparison_metadata.last_listings[0]["id"] == "listing/with:provider-id"
+    assert comparison_metadata.last_comparison is not None
     assert saved.listing.latitude == 37.401
     assert saved.listing.commute is not None
     assert saved.listing.commute.durationMinutes == 18
@@ -146,6 +160,163 @@ def test_stub_agent_records_conversation_metadata() -> None:
     assert metadata.last_listings == ()
 
 
+def test_comparison_updates_selected_snapshots_without_dropping_results() -> None:
+    conversations = MemoryConversationRepository()
+    service = AgentService(mode="stub", conversation_repository=conversations)
+    original_one = ListingResponse(
+        id="one",
+        title="Heatherstone",
+        price=3180,
+        bedrooms=2,
+        sourcePostings=[
+            {
+                "id": "one",
+                "source": "realtyapi-apartments",
+                "url": "https://example.com/one",
+            }
+        ],
+    ).model_dump(mode="json")
+    original_two = ListingResponse(
+        id="two", title="Kentfield", price=3000, bedrooms=2
+    ).model_dump(mode="json")
+    verified_canonical = {
+        "schemaVersion": "kbf.canonical-listing.v1",
+        "identity": {
+            "id": "one",
+            "sourceListingId": "source-one",
+            "propertyName": "Heatherstone",
+        },
+        "location": {
+            "address": "877 Heatherstone Way",
+            "city": "Mountain View",
+            "state": "CA",
+            "zipCode": "94040",
+            "countryCode": "US",
+            "latitude": 37.4,
+            "longitude": -122.1,
+        },
+        "pricing": {"rent": 3180, "rentMin": None, "rentMax": None},
+        "property": {
+            "bedrooms": 2,
+            "bedroomsMin": None,
+            "bedroomsMax": None,
+            "bathrooms": None,
+            "bathroomsMinEvidence": None,
+            "propertyType": "Apartment",
+        },
+        "availability": {},
+        "policies": {
+            "petsAllowed": True,
+            "petPolicy": "Cats and dogs allowed",
+            "parkingAvailable": True,
+        },
+        "features": {},
+        "media": {},
+        "contact": {},
+        "source": {"url": "https://example.com/one"},
+        "evidence": {"detailVerified": True},
+        "completeness": {
+            "unknownFields": ["property.bathrooms"],
+            "decisionReady": False,
+        },
+    }
+    response = SearchResponse(
+        conversationId="conversation-1",
+        message="Heatherstone allows cats and dogs.",
+        listings=[
+            ListingResponse(
+                id="one",
+                title="Heatherstone",
+                price=3180,
+                bedrooms=2,
+                canonicalListing=verified_canonical,
+            )
+        ],
+        comparison={
+            "schemaVersion": "kbf.canonical-comparison.v1",
+            "listingIds": ["one"],
+            "results": [
+                {
+                    "listingId": "one",
+                    "hardConstraintStatus": "pass",
+                    "satisfiesCurrentRequirements": True,
+                    "softPreferenceEvidence": [],
+                    "tradeoffs": [],
+                    "comparisonUnknowns": ["property.bathrooms"],
+                    "decisionUnknowns": ["property.bathrooms"],
+                    "decisionReady": False,
+                    "score": None,
+                    "rank": 1,
+                }
+            ],
+        },
+        searchPerformed=False,
+        mode="adk",
+    )
+
+    async def scenario():
+        await conversations.claim("conversation-1", "user-a")
+        await conversations.record_response(
+            "conversation-1",
+            "user-a",
+            listings=[original_one, original_two],
+            commute_status=None,
+            route_listing_id=None,
+        )
+        await service._record_conversation_response(response, user_id="user-a")
+        metadata = await conversations.get_for_user(
+            "conversation-1", "user-a"
+        )
+        return metadata
+
+    metadata = asyncio.run(scenario())
+
+    assert [item["id"] for item in metadata.last_listings] == ["one", "two"]
+    assert metadata.last_listings[0]["canonicalListing"]["policies"][
+        "petsAllowed"
+    ] is True
+    assert metadata.last_listings[0]["sourcePostings"][0]["id"] == "one"
+    assert response.listings[0].sourcePostings[0].id == "one"
+
+
+def test_detail_only_response_updates_persisted_listings() -> None:
+    conversations = MemoryConversationRepository()
+    service = AgentService(mode="stub", conversation_repository=conversations)
+    response = SearchResponse(
+        conversationId="conversation-1",
+        message="Here are the verified details.",
+        listings=[
+            ListingResponse(
+                id="detail-listing",
+                title="Detailed Home",
+                price=3250,
+                bedrooms=2,
+            )
+        ],
+        searchPerformed=False,
+        mode="adk",
+    )
+
+    async def scenario():
+        await conversations.claim("conversation-1", "user-a")
+        await conversations.record_response(
+            "conversation-1",
+            "user-a",
+            listings=[maps_listing()],
+            commute_status=None,
+            route_listing_id=None,
+        )
+        await service._record_conversation_response(response, user_id="user-a")
+        return await conversations.get_for_user("conversation-1", "user-a")
+
+    metadata = asyncio.run(scenario())
+
+    assert [item["id"] for item in metadata.last_listings] == [
+        "detail-listing"
+    ]
+    assert metadata.last_listings[0]["price"] == 3250
+
+
 def test_shortlist_http_contract_uses_fastapi_not_direct_firestore() -> None:
     conversations = MemoryConversationRepository()
     shortlist = MemoryShortlistRepository()
@@ -188,6 +359,10 @@ def test_shortlist_http_contract_uses_fastapi_not_direct_firestore() -> None:
             "conversationId": "conversation-1",
         },
     )
+    updated = client.patch(
+        "/api/shortlist/listing%2Fwith%3Aprovider-id",
+        json={"note": "  Tour on Saturday  "},
+    )
     listed = client.get("/api/shortlist")
     removed = client.delete(
         "/api/shortlist/listing%2Fwith%3Aprovider-id"
@@ -195,6 +370,8 @@ def test_shortlist_http_contract_uses_fastapi_not_direct_firestore() -> None:
     empty = client.get("/api/shortlist")
 
     assert saved.status_code == 201
+    assert updated.status_code == 200
+    assert updated.json()["note"] == "Tour on Saturday"
     assert saved.json()["listing"]["commute"]["durationMinutes"] == 18
     assert [item["listing"]["id"] for item in listed.json()["items"]] == [
         "listing/with:provider-id"
@@ -234,6 +411,35 @@ def test_cors_allows_browser_shortlist_delete() -> None:
 
     assert response.status_code == 200
     assert "DELETE" in response.headers["Access-Control-Allow-Methods"]
+    assert "PATCH" in response.headers["Access-Control-Allow-Methods"]
+
+
+def test_shortlist_note_completes_update_part_of_crud() -> None:
+    conversations = MemoryConversationRepository()
+    shortlist = MemoryShortlistRepository()
+    service = ShortlistService(conversations, shortlist)
+
+    async def scenario():
+        await conversations.claim("conversation-1", "user-a")
+        await conversations.record_response(
+            "conversation-1",
+            "user-a",
+            listings=[maps_listing()],
+            commute_status=None,
+            route_listing_id=None,
+        )
+        await service.save(
+            "user-a",
+            conversation_id="conversation-1",
+            listing_id="listing/with:provider-id",
+        )
+        return await service.update_note(
+            "user-a", "listing/with:provider-id", "Tour on Saturday"
+        )
+
+    updated = asyncio.run(scenario())
+
+    assert updated.note == "Tour on Saturday"
 
 
 def test_repository_initialization_failure_has_stable_503_response() -> None:

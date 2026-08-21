@@ -100,12 +100,14 @@ conversations/{hashed-conversation-id}
   lastListings[]
   lastCommuteStatus
   lastRouteListingId
+  lastComparison
 
 users/{hashed-firebase-uid}/shortlist/{hashed-listing-id}
   schemaVersion
   listingId
   sourceConversationId
   listingSnapshot
+  note
   savedAt
   updatedAt
 ```

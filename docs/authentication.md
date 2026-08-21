@@ -1,8 +1,8 @@
 # Firebase Authentication (Milestone 2)
 
 This guide adds a private user identity to the existing browser → FastAPI → ADK
-flow. It uses **anonymous Firebase sign-in** for the MVP, so a visitor is signed
-in automatically and does not need to create a password.
+flow. It starts each visitor with **anonymous Firebase sign-in**, then supports
+upgrading that session or signing in with **Email/Password** or **Google**.
 
 ## What this milestone does
 
@@ -31,10 +31,13 @@ conversation in PostgreSQL when `ADK_SESSION_MODE=database`, so a Cloud Run
 restart can preserve both ownership and earlier conversational refinements. See
 `docs/firestore.md` and `docs/adk-sessions.md` for the two storage jobs.
 
-Anonymous identity is also tied to the browser's local Firebase data. Clearing
+Anonymous identity is tied to the browser's local Firebase data. Clearing
 browser storage, using a different browser, or using another device creates a
-new anonymous user. A later Google sign-in feature can give users a durable
-cross-device identity without changing backend token verification.
+new anonymous user. Linking a new Email/Password or Google credential to that
+anonymous session preserves its UID and its in-progress rental state. Signing
+in to an existing account can switch to a different UID; the frontend then
+clears the previous user's conversation, listings, shortlist, and comparison
+state before loading the new user's shortlist.
 
 ## 1. Check the Mac prerequisites
 
@@ -87,15 +90,26 @@ The web values such as `apiKey`, `authDomain`, `projectId`, and `appId` identify
 the Firebase project. They are designed to be included in browser code; they do
 not replace backend authorization checks.
 
-## 4. Enable anonymous sign-in
+## 4. Enable the Firebase sign-in providers
 
 1. In Firebase Console, open **Build → Authentication**.
 2. Choose **Get started** if Authentication has not been initialized.
 3. Open **Sign-in method**.
-4. Select **Anonymous**, enable it, and save.
+4. Enable each provider used by the frontend:
+   - **Anonymous** — lets the visitor start searching immediately.
+   - **Email/Password** — enable the provider named **Email/Password**; do not
+     select Email link (passwordless sign-in).
+   - **Google** — enable the provider, choose a project support email if
+     Firebase asks for one, and save.
+5. Open **Authentication → Settings** and review **Authorized domains**.
+   Ensure `localhost` is present for local Google popup sign-in. Add the
+   hostname serving the deployed frontend as well, without `https://` or a
+   path. Do not add the backend API hostname for this browser popup flow.
 
-If this provider is not enabled, the browser will show the safe message
-"Couldn't sign you in" and no chat request will be sent.
+If a provider is not enabled, the corresponding flow fails with
+`auth/operation-not-allowed`; if the browser hostname is missing, Google sign-in
+fails with an unauthorized-domain error. Fix those settings before debugging
+frontend code.
 
 ## 5. Configure the backend
 
@@ -155,7 +169,11 @@ The desired result is:
 - `POST /api/chat` returns HTTP `200`;
 - the response contains a `conversationId`;
 - a follow-up such as "I also need parking" keeps the same conversation;
-- Firebase Console → Authentication → Users shows an anonymous user.
+- Firebase Console → Authentication → Users shows an anonymous user;
+- creating an Email/Password account or continuing with Google keeps the
+  current shortlist and conversation when Firebase links the credential;
+- signing in to a different existing account clears the old rental state and
+  loads that account's shortlist.
 
 To inspect the request in Chrome:
 
@@ -254,7 +272,9 @@ make Cloud Run public based on Firebase authentication alone.
 
 | Symptom | Meaning | What to check |
 |---|---|---|
-| UI says it could not sign in | Browser could not get a Firebase token | Anonymous provider and `frontend/.env.local` values |
+| UI says it could not sign in | Browser could not get a Firebase token | Enabled providers, authorized domains, and `frontend/.env.local` values |
+| `auth/operation-not-allowed` | The selected provider is disabled | Enable Anonymous, Email/Password, or Google in **Authentication → Sign-in method** |
+| Google sign-in reports an unauthorized domain | The browser hostname is not allowed for OAuth | Add the frontend hostname under **Authentication → Settings → Authorized domains** |
 | `/api/chat` returns 401 | Token missing, expired, forged, or for another Firebase project | Frontend/backend project IDs and Authorization header |
 | `/api/chat` returns 503 | Backend Firebase configuration is unavailable | `AUTH_MODE`, `FIREBASE_PROJECT_ID`, and local ADC |
 | `/api/chat` returns 403 | Conversation belongs to another verified uid | Start a new conversation for the current user |
@@ -262,9 +282,16 @@ make Cloud Run public based on Firebase authentication alone.
 | Browser reports a CORS error | Origin or allowed headers do not match | `FRONTEND_ORIGIN` and restart backend |
 | `npm run check` rejects Node | Installed Node is too old | Install Node 20.9+; Node 24 recommended |
 
-## Adding Google sign-in later
+## How account linking affects the session
 
-Firebase tokens have the same backend verification path regardless of whether
-the provider is anonymous or Google. To add Google sign-in later, enable the
-Google provider and change the frontend sign-in experience. The backend should
-continue verifying the token and using only its verified `uid`.
+Firebase tokens use the same backend verification path for Anonymous,
+Email/Password, and Google sign-in. The backend continues verifying the token
+and using only its verified `uid`.
+
+When an anonymous visitor creates an Email/Password account or continues with
+Google, the frontend first attempts to link that credential to the current
+anonymous user. That keeps the UID and preserves the current conversation and
+shortlist. If the credential already belongs to another Firebase user, the
+frontend signs in to that existing account instead; because the UID changes,
+the old identity-bound rental state is discarded and the new user's shortlist
+is fetched.
