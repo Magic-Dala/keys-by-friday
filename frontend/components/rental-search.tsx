@@ -1,12 +1,15 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import type { User } from "firebase/auth";
 
 import { AgentMessage } from "@/components/agent-message";
 import { Brand } from "@/components/brand";
 import { ComparisonPanel } from "@/components/comparison-panel";
 import {
   CheckIcon,
+  EyeIcon,
+  EyeOffIcon,
   HeartIcon,
   ListIcon,
   MapIcon,
@@ -24,6 +27,14 @@ import {
   saveShortlistItem,
   sendChat,
 } from "@/lib/api";
+import {
+  createAccountWithEmail,
+  getAuthIdentityKey,
+  observeFirebaseUser,
+  signInWithEmail,
+  signInWithGoogle,
+  signOutToAnonymous,
+} from "@/lib/firebase-auth";
 import type {
   AgentMode,
   CanonicalComparison,
@@ -85,29 +96,113 @@ export function RentalSearch() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>();
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [authView, setAuthView] = useState<"sign-in" | "create">("sign-in");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authPasswordVisible, setAuthPasswordVisible] = useState(false);
+  const [authFormError, setAuthFormError] = useState<string>();
+  const [authFormStatus, setAuthFormStatus] = useState<string>();
   const requestRef = useRef<AbortController | null>(null);
   const comparisonRequestRef = useRef<AbortController | null>(null);
+  const shortlistRequestRef = useRef<AbortController | null>(null);
+  const activeFirebaseUidRef = useRef<string | undefined>(undefined);
+  const identityGenerationRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const routeSelection = useRouteSelection(conversationId);
   const isMobileViewport = useMobileViewport();
   const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
+  const authIdentityKey = getAuthIdentityKey(authUser);
+
+  function isCurrentIdentity(generation: number) {
+    return identityGenerationRef.current === generation;
+  }
+
+  function abortChatRequest() {
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }
+
+  function resetForFirebaseBoundary(nextUid?: string) {
+    abortChatRequest();
+    comparisonRequestRef.current?.abort();
+    comparisonRequestRef.current = null;
+    shortlistRequestRef.current?.abort();
+    shortlistRequestRef.current = null;
+    routeSelection.reset();
+    activeFirebaseUidRef.current = nextUid;
+    identityGenerationRef.current += 1;
+    setDraft("");
+    setConversationId(undefined);
+    setTurns([]);
+    setListings([]);
+    setCommuteEvaluation(undefined);
+    setMobileResultsView("list");
+    setHighlightedListingId(undefined);
+    setSavedListings([]);
+    setCompareIds([]);
+    setShowComparison(false);
+    setComparison(undefined);
+    setComparisonExplanation(undefined);
+    setComparisonError(undefined);
+    setComparisonLoading(false);
+    setMode(undefined);
+    setError(undefined);
+    setNotice(undefined);
+    setLoading(false);
+  }
+
+  useEffect(() => observeFirebaseUser(setAuthUser), []);
 
   useEffect(() => {
+    const uid = authIdentityKey;
+    const previousUid = activeFirebaseUidRef.current;
+
+    if (!uid) {
+      if (previousUid !== undefined) resetForFirebaseBoundary();
+      return;
+    }
+
+    if (previousUid !== undefined && previousUid !== uid) {
+      resetForFirebaseBoundary(uid);
+    } else {
+      activeFirebaseUidRef.current = uid;
+    }
+
+    const identityGeneration = identityGenerationRef.current;
     const controller = new AbortController();
+    shortlistRequestRef.current?.abort();
+    shortlistRequestRef.current = controller;
     getShortlist({ signal: controller.signal })
       .then((response) => {
+        if (
+          shortlistRequestRef.current !== controller
+          || activeFirebaseUidRef.current !== uid
+          || !isCurrentIdentity(identityGeneration)
+        ) return;
         setSavedListings(response.items.map((item) => item.listing));
       })
       .catch((caught) => {
-        if (caught instanceof Error && caught.name === "AbortError") return;
+        if (
+          caught instanceof Error && caught.name === "AbortError"
+          || shortlistRequestRef.current !== controller
+          || activeFirebaseUidRef.current !== uid
+          || !isCurrentIdentity(identityGeneration)
+        ) return;
         setNotice("Your saved shortlist could not be loaded yet.");
       });
-    return () => controller.abort();
-  }, []);
+    return () => {
+      controller.abort();
+      if (shortlistRequestRef.current === controller) shortlistRequestRef.current = null;
+    };
+  }, [authIdentityKey]);
 
   useEffect(() => () => {
-    requestRef.current?.abort();
+    abortChatRequest();
     comparisonRequestRef.current?.abort();
+    shortlistRequestRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -116,13 +211,26 @@ export function RentalSearch() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  useEffect(() => {
+    if (!authDialogOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setAuthDialogOpen(false);
+      setAuthFormError(undefined);
+      setAuthFormStatus(undefined);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [authDialogOpen]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = draft.trim();
     if (!message || loading) return;
 
+    const identityGeneration = identityGenerationRef.current;
     const controller = new AbortController();
-    requestRef.current?.abort();
+    abortChatRequest();
     comparisonRequestRef.current?.abort();
     routeSelection.reset();
     setHighlightedListingId(undefined);
@@ -138,6 +246,7 @@ export function RentalSearch() {
         { message, conversationId },
         { signal: controller.signal },
       );
+      if (requestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
       setConversationId(response.conversationId);
       setMode(response.mode);
       setListings(response.listings);
@@ -155,11 +264,13 @@ export function RentalSearch() {
         { id: turnId("agent"), role: "agent", text: response.message },
       ]);
     } catch (caught) {
+      if (requestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       setDraft(message);
       setError(caught instanceof Error ? caught.message : "The search could not be completed.");
     } finally {
-      if (requestRef.current === controller) requestRef.current = null;
+      if (requestRef.current !== controller) return;
+      requestRef.current = null;
       setLoading(false);
     }
   }
@@ -169,8 +280,94 @@ export function RentalSearch() {
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
+  function openAuthDialog() {
+    setAuthView("sign-in");
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    setAuthPasswordVisible(false);
+    setAuthDialogOpen(true);
+  }
+
+  function closeAuthDialog() {
+    setAuthDialogOpen(false);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    setAuthPassword("");
+    setAuthPasswordVisible(false);
+  }
+
+  function switchAuthView(view: "sign-in" | "create") {
+    setAuthView(view);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    setAuthPassword("");
+    setAuthPasswordVisible(false);
+  }
+
+  async function handleGoogleSignIn() {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    try {
+      setAuthUser(await signInWithGoogle());
+      closeAuthDialog();
+    } catch (caught) {
+      setAuthFormError(caught instanceof Error ? caught.message : "Google sign-in could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleEmailAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (authBusy) return;
+
+    const email = authEmail.trim();
+    if (!email) {
+      setAuthFormError("Enter your email address.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAuthFormError("Enter a valid email address.");
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthFormError("Use at least 6 characters for your password.");
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthFormError(undefined);
+    setAuthFormStatus(undefined);
+    try {
+      const user = authView === "create"
+        ? await createAccountWithEmail(email, authPassword)
+        : await signInWithEmail(email, authPassword);
+      setAuthUser(user);
+      closeAuthDialog();
+    } catch (caught) {
+      setAuthFormError(caught instanceof Error ? caught.message : "Email sign-in could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleSignOut() {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setNotice(undefined);
+    try {
+      setAuthUser(await signOutToAnonymous());
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : "Sign out could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
   function startNewSearch() {
-    requestRef.current?.abort();
+    abortChatRequest();
     comparisonRequestRef.current?.abort();
     setConversationId(undefined);
     setTurns([]);
@@ -193,14 +390,17 @@ export function RentalSearch() {
   }
 
   async function toggleSaved(listing: Listing) {
+    const identityGeneration = identityGenerationRef.current;
     const isSaved = savedListings.some((item) => item.id === listing.id);
     if (isSaved) {
       const previous = savedListings;
       setSavedListings((current) => current.filter((item) => item.id !== listing.id));
       try {
         await removeShortlistItem(listing.id);
+        if (!isCurrentIdentity(identityGeneration)) return;
         setNotice("Removed from your shortlist.");
       } catch (caught) {
+        if (!isCurrentIdentity(identityGeneration)) return;
         setSavedListings(previous);
         setNotice(caught instanceof Error ? caught.message : "The home could not be removed.");
       }
@@ -215,12 +415,14 @@ export function RentalSearch() {
     setSavedListings((current) => [listing, ...current].slice(0, 24));
     try {
       const saved = await saveShortlistItem(listing.id, conversationId);
+      if (!isCurrentIdentity(identityGeneration)) return;
       setSavedListings((current) => [
         saved.listing,
         ...current.filter((item) => item.id !== saved.listing.id),
       ].slice(0, 24));
       setNotice("Saved to your shortlist.");
     } catch (caught) {
+      if (!isCurrentIdentity(identityGeneration)) return;
       setSavedListings((current) => current.filter((item) => item.id !== listing.id));
       setNotice(caught instanceof Error ? caught.message : "The home could not be saved.");
     }
@@ -248,6 +450,7 @@ export function RentalSearch() {
 
   async function openComparison() {
     if (!conversationId || compareIds.length < 2) return;
+    const identityGeneration = identityGenerationRef.current;
     const controller = new AbortController();
     comparisonRequestRef.current?.abort();
     comparisonRequestRef.current = controller;
@@ -258,6 +461,7 @@ export function RentalSearch() {
       const response = await compareListings(compareIds, conversationId, {
         signal: controller.signal,
       });
+      if (comparisonRequestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
       const refreshedById = new Map(
         response.listings.map((listing) => [listing.id, listing]),
       );
@@ -267,6 +471,7 @@ export function RentalSearch() {
       setComparison(response.comparison);
       setComparisonExplanation(response.message);
     } catch (caught) {
+      if (comparisonRequestRef.current !== controller || !isCurrentIdentity(identityGeneration)) return;
       if (caught instanceof Error && caught.name === "AbortError") return;
       setComparisonError(
         caught instanceof Error
@@ -309,6 +514,31 @@ export function RentalSearch() {
         <Brand />
         <div className="topbarActions">
           <span className="agentStatus"><span />Agent ready</span>
+          {authUser?.isAnonymous ? (
+            <button
+              className="authButton signInButton"
+              type="button"
+              onClick={openAuthDialog}
+              disabled={authBusy}
+            >
+              Sign in
+            </button>
+          ) : authUser ? (
+            <div className="accountControls">
+              <div className="accountIdentity">
+                {authUser.displayName ? <strong>{authUser.displayName}</strong> : null}
+                {authUser.email ? <span>{authUser.email}</span> : <span>Google account</span>}
+              </div>
+              <button
+                className="authButton"
+                type="button"
+                onClick={handleSignOut}
+                disabled={authBusy}
+              >
+                {authBusy ? "Signing out…" : "Sign Out"}
+              </button>
+            </div>
+          ) : null}
           {turns.length ? (
             <button className="quietButton" type="button" onClick={startNewSearch}>
               <PlusIcon className="buttonIcon" /> New search
@@ -316,6 +546,122 @@ export function RentalSearch() {
           ) : null}
         </div>
       </header>
+
+      {authUser?.isAnonymous && authDialogOpen ? (
+        <div
+          className="authModalBackdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeAuthDialog();
+          }}
+        >
+          <section
+            className="authDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auth-dialog-title"
+          >
+            <button
+              className="authDialogClose"
+              type="button"
+              aria-label="Close sign in dialog"
+              onClick={closeAuthDialog}
+            >
+              ×
+            </button>
+            <div className="authDialogHeader">
+              <span className="sectionEyebrow">Your Keys account</span>
+              <h2 id="auth-dialog-title">
+                {authView === "create" ? "Create your account" : "Sign in to Keys by Friday"}
+              </h2>
+              <p>
+                {authView === "create"
+                  ? "Keep your shortlist and rental search connected across sessions."
+                  : "Pick up your shortlist and rental search wherever you left off."}
+              </p>
+            </div>
+
+            <form className="authForm" noValidate onSubmit={handleEmailAuth}>
+              <label>
+                <span>Email address</span>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  autoComplete="email"
+                  autoFocus
+                />
+              </label>
+              <div className="authField">
+                <div className="authPasswordLabel">
+                  <label htmlFor="auth-password">Password</label>
+                  {authView === "sign-in" ? (
+                    <button
+                      className="authTextButton"
+                      type="button"
+                      onClick={() => {
+                        setAuthFormError(undefined);
+                        setAuthFormStatus("Password reset is coming soon.");
+                      }}
+                    >
+                      Forgot password?
+                    </button>
+                  ) : null}
+                </div>
+                <div className="authPasswordInput">
+                  <input
+                    id="auth-password"
+                    type={authPasswordVisible ? "text" : "password"}
+                    value={authPassword}
+                    onChange={(event) => setAuthPassword(event.target.value)}
+                    autoComplete={authView === "create" ? "new-password" : "current-password"}
+                  />
+                  <button
+                    className="authPasswordToggle"
+                    type="button"
+                    aria-label={authPasswordVisible ? "Hide password" : "Show password"}
+                    aria-pressed={authPasswordVisible}
+                    onClick={() => setAuthPasswordVisible((visible) => !visible)}
+                  >
+                    {authPasswordVisible ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
+              </div>
+
+              {authFormError ? <p className="authFormMessage error" role="alert">{authFormError}</p> : null}
+              {authFormStatus ? <p className="authFormMessage" role="status">{authFormStatus}</p> : null}
+
+              <button className="authPrimaryButton" type="submit" disabled={authBusy}>
+                {authBusy
+                  ? authView === "create" ? "Creating account…" : "Signing in…"
+                  : authView === "create" ? "Create account" : "Sign in"}
+              </button>
+            </form>
+
+            <div className="authDivider" aria-hidden="true"><span>or</span></div>
+
+            <button
+              className="googleAuthButton"
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={authBusy}
+            >
+              <span className="googleAuthMark" aria-hidden="true">G</span>
+              {authBusy ? "Connecting…" : "Continue with Google"}
+            </button>
+
+            <p className="authDialogFooter">
+              {authView === "create" ? "Already have an account?" : "Don’t have an account?"}
+              <button
+                className="authTextButton"
+                type="button"
+                onClick={() => switchAuthView(authView === "create" ? "sign-in" : "create")}
+              >
+                {authView === "create" ? "Sign in" : "Create account"}
+              </button>
+            </p>
+          </section>
+        </div>
+      ) : null}
 
       <div className="workspace">
         <main className="mainPanel" id="main-content">
