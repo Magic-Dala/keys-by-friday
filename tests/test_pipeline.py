@@ -104,6 +104,27 @@ def test_search_admits_overlapping_bedroom_range_without_treating_representative
     assert "bedroom range requires unit-level verification" in ranked[0].tradeoffs
 
 
+def test_exact_bedroom_is_not_marked_as_range_unknown_when_bathroom_is_missing():
+    req = SearchRequirements(city="Mountain View", min_bedrooms=2, max_bedrooms=2)
+    base = MockListingProvider().search(SearchRequirements(city="Mountain View"))[0]
+    listing = replace(
+        base,
+        id="exact-bedroom-missing-bath",
+        bedrooms=2,
+        bedrooms_is_exact=True,
+        bedrooms_min=2,
+        bedrooms_max=2,
+        bathrooms=None,
+        bathrooms_min_evidence=None,
+    )
+
+    ranked = filter_and_rank([listing], req, top_n=10)
+
+    assert [item.listing.id for item in ranked] == ["exact-bedroom-missing-bath"]
+    assert "2 bed" in ranked[0].reasons
+    assert "bedroom range requires unit-level verification" not in ranked[0].tradeoffs
+
+
 def test_query_backed_pet_and_parking_evidence_is_not_described_as_confirmed():
     req = SearchRequirements(
         city="Mountain View",

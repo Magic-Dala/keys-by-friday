@@ -358,7 +358,7 @@ def normalize_zillow_listing(
                     _number(unit.get("minPrice"))
                     if _number(unit.get("minPrice")) is not None
                     else float("inf"),
-                    _number(unit.get("bedrooms")) or float("inf"),
+                    _number(unit.get("bedrooms")) if _number(unit.get("bedrooms")) is not None else float("inf"),
                 ),
             )
             bedrooms = _number(selected_unit.get("bedrooms"))

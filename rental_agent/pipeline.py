@@ -150,8 +150,11 @@ def _explain(
             reasons.append(f"rent range up to ${rent_max:,.0f}/mo within budget")
         elif rent_min is not None or rent_max is not None:
             tradeoffs.append("rent range may include units above budget; verify unit rent")
-    if exact_bedrooms is not None and listing.bathrooms is not None:
-        reasons.append(f"{exact_bedrooms:g} bed / {listing.bathrooms:g} bath")
+    if exact_bedrooms is not None:
+        if listing.bathrooms is not None:
+            reasons.append(f"{exact_bedrooms:g} bed / {listing.bathrooms:g} bath")
+        else:
+            reasons.append(f"{exact_bedrooms:g} bed")
     elif req.min_bedrooms is not None or req.max_bedrooms is not None:
         bedrooms_min = property_data["bedroomsMin"]
         bedrooms_max = property_data["bedroomsMax"]
