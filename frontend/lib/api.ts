@@ -1,5 +1,7 @@
 import { getFirebaseIdToken } from "@/lib/firebase-auth";
 import type {
+  Comparison,
+  ComparisonResult,
   Commute,
   CommuteEvaluation,
   Listing,
@@ -131,6 +133,68 @@ function parseRouteDetail(value: unknown): RouteDetail {
   };
 }
 
+function stringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new ApiError(`Invalid ${field} in API response.`);
+  }
+  return value;
+}
+
+function parseComparisonResult(value: unknown): ComparisonResult {
+  if (!isRecord(value) || typeof value.listingId !== "string") {
+    throw new ApiError("Invalid comparison result in API response.");
+  }
+  const statuses = ["pass", "fail", "evidence_only", "unknown"] as const;
+  if (!statuses.includes(value.hardConstraintStatus as (typeof statuses)[number])) {
+    throw new ApiError("Invalid hard-constraint status in API response.");
+  }
+  if (!Array.isArray(value.softPreferenceEvidence)) {
+    throw new ApiError("Invalid soft-preference evidence in API response.");
+  }
+  if (value.softPreferenceEvidence.some((item) => !isRecord(item))) {
+    throw new ApiError("Invalid soft-preference evidence in API response.");
+  }
+  if (typeof value.decisionReady !== "boolean") {
+    throw new ApiError("Invalid comparison decision-ready value in API response.");
+  }
+  if (
+    value.satisfiesCurrentRequirements !== undefined &&
+    value.satisfiesCurrentRequirements !== null &&
+    typeof value.satisfiesCurrentRequirements !== "boolean"
+  ) {
+    throw new ApiError("Invalid comparison requirement status in API response.");
+  }
+  return {
+    listingId: value.listingId,
+    hardConstraintStatus: value.hardConstraintStatus as ComparisonResult["hardConstraintStatus"],
+    satisfiesCurrentRequirements:
+      value.satisfiesCurrentRequirements === null
+        ? undefined
+        : value.satisfiesCurrentRequirements as boolean | undefined,
+    softPreferenceEvidence: value.softPreferenceEvidence as Record<string, unknown>[],
+    tradeoffs: stringArray(value.tradeoffs, "comparison tradeoffs"),
+    comparisonUnknowns: stringArray(value.comparisonUnknowns, "comparison unknowns"),
+    decisionUnknowns: stringArray(value.decisionUnknowns, "decision unknowns"),
+    decisionReady: value.decisionReady,
+    score: optionalNumber(value.score, "comparison score"),
+    rank: optionalNumber(value.rank, "comparison rank"),
+  };
+}
+
+function parseComparison(value: unknown): Comparison {
+  if (!isRecord(value) || value.schemaVersion !== "kbf.canonical-comparison.v1") {
+    throw new ApiError("Invalid comparison in API response.");
+  }
+  if (!Array.isArray(value.results)) {
+    throw new ApiError("Invalid comparison results in API response.");
+  }
+  return {
+    schemaVersion: value.schemaVersion,
+    listingIds: stringArray(value.listingIds, "comparison listing IDs"),
+    results: value.results.map(parseComparisonResult),
+  };
+}
+
 function parseListing(value: unknown): Listing {
   if (!isRecord(value) || typeof value.id !== "string") {
     throw new ApiError("Invalid listing in API response.");
@@ -183,6 +247,10 @@ function parseSearchResponse(value: unknown): SearchResponse {
       value.route === undefined || value.route === null
         ? undefined
         : parseRouteDetail(value.route),
+    comparison:
+      value.comparison === undefined || value.comparison === null
+        ? undefined
+        : parseComparison(value.comparison),
     mode: value.mode,
   };
 }

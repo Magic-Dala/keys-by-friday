@@ -49,8 +49,8 @@ def _canonical_status(value: object) -> str | None:
 
 def _numeric_range(value: object) -> tuple[float | None, float | None]:
     if isinstance(value, dict):
-        low = _number(value.get("min") or value.get("minimum") or value.get("low"))
-        high = _number(value.get("max") or value.get("maximum") or value.get("high"))
+        low = _first_number(value, "min", "minimum", "low")
+        high = _first_number(value, "max", "maximum", "high")
         if low is None and high is None:
             single = _number(value.get("value"))
             return single, single

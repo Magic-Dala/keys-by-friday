@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from backend.app.config import AdkSessionMode, get_settings
 from backend.app.models.search import (
+    ComparisonResponse,
     CommuteEvaluationResponse,
     CommuteResponse,
     ListingResponse,
@@ -29,6 +30,7 @@ from backend.app.services.conversation_turns import ConversationTurnCoordinator
 
 
 _CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
+_CANONICAL_COMPARISON_SCHEMA = "kbf.canonical-comparison.v1"
 
 
 logger = logging.getLogger("keys_by_friday.agent")
@@ -227,6 +229,17 @@ def _commute_evaluation_from_tool_payload(
         withinLimitCount=count("within_limit_count"),
         overLimitCount=count("over_limit_count"),
     )
+
+
+def _comparison_from_tool_payload(value: object) -> ComparisonResponse | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("schemaVersion") != _CANONICAL_COMPARISON_SCHEMA:
+        return None
+    try:
+        return ComparisonResponse.model_validate(value)
+    except ValueError:
+        return None
 
 
 def _route_from_tool_payload(value: object) -> RouteDetailResponse | None:
@@ -702,6 +715,7 @@ class AgentService:
             search_payload: dict[str, Any] | None = None
             detail_payloads: list[dict[str, Any]] = []
             route_payload: dict[str, Any] | None = None
+            comparison_payload: dict[str, Any] | None = None
             models: list[str] = []
             search_started_at: float | None = None
             provider_latency_ms: float | None = None
@@ -731,6 +745,8 @@ class AgentService:
                         detail_payloads.append(payload)
                     elif function_response.name == "get_route_details":
                         route_payload = payload
+                    elif function_response.name == "compare_candidates":
+                        comparison_payload = payload
 
                 if event.is_final_response() and event.content:
                     final_text = "".join(
@@ -767,6 +783,7 @@ class AgentService:
                 search_payload.get("commute_summary") if search_payload else None
             ),
             route=_route_from_tool_payload(route_payload),
+            comparison=_comparison_from_tool_payload(comparison_payload),
             mode="adk",
         )
 
