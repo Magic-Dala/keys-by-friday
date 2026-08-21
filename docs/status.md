@@ -91,6 +91,7 @@ Next.js Frontend
 - ✅ Authentication configuration included in readiness checks
 - ✅ Backend Firestore client factory and repository interfaces
 - ✅ Durable conversation ownership and normalized result metadata
+- ✅ Authenticated, bounded Recent Searches metadata API with user-scoped ordering and zero-turn exclusion
 - ✅ Backend-owned shortlist save, list, and remove APIs
 - ✅ Shortlist snapshots preserve structured coordinate and commute evidence
 - ✅ Fake in-memory repositories cover persistence without cloud quota in CI
@@ -121,14 +122,14 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 196 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 207 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
 - ✅ Next.js production build passed
-- ✅ Frontend suite: 6 files / 30 tests passed, including the structured comparison interaction
+- ✅ Frontend suite: 7 files / 51 tests passed, including Firebase auth and the structured comparison interaction
 - ✅ TypeScript typecheck passed
 - ✅ Frontend page rendered locally
 - ✅ Backend health endpoint responded successfully

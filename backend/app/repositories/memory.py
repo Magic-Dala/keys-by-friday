@@ -5,11 +5,13 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from backend.app.repositories.base import (
+    DEFAULT_CONVERSATION_LIST_LIMIT,
     ConversationMetadata,
     ConversationNotFoundError,
     ConversationOwnershipError,
     ShortlistItem,
     ShortlistItemNotFoundError,
+    bounded_conversation_limit,
 )
 
 
@@ -37,6 +39,23 @@ class MemoryConversationRepository:
     def __init__(self) -> None:
         self._records: dict[str, ConversationMetadata] = {}
         self._lock = asyncio.Lock()
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = DEFAULT_CONVERSATION_LIST_LIMIT,
+    ) -> list[ConversationMetadata]:
+        async with self._lock:
+            records = [
+                record
+                for record in self._records.values()
+                if record.user_id == user_id and record.turn_count > 0
+            ]
+            records.sort(key=lambda record: record.updated_at, reverse=True)
+            return [
+                _copy_conversation(record)
+                for record in records[:bounded_conversation_limit(limit)]
+            ]
 
     async def claim(
         self, conversation_id: str, user_id: str

@@ -8,12 +8,15 @@ import hmac
 from typing import Any
 
 from backend.app.repositories.base import (
+    DEFAULT_CONVERSATION_LIST_LIMIT,
+    MAX_CONVERSATION_SCAN,
     ConversationMetadata,
     ConversationNotFoundError,
     ConversationOwnershipError,
     RepositoryUnavailableError,
     ShortlistItem,
     ShortlistItemNotFoundError,
+    bounded_conversation_limit,
 )
 
 
@@ -50,6 +53,61 @@ class FirestoreConversationRepository:
         return self._client.collection("conversations").document(
             _document_id("conversation", conversation_id)
         )
+
+    def _list_sync(
+        self,
+        user_id: str,
+        limit: int,
+    ) -> list[ConversationMetadata]:
+        try:
+            requested_limit = bounded_conversation_limit(limit)
+            page_size = max(requested_limit, 20)
+            query = (
+                self._client.collection("conversations")
+                .where("ownerHash", "==", _owner_hash(user_id))
+                .order_by("updatedAt", direction="DESCENDING")
+            )
+            conversations: list[ConversationMetadata] = []
+            cursor = None
+            scanned = 0
+
+            while scanned < MAX_CONVERSATION_SCAN:
+                page_limit = min(page_size, MAX_CONVERSATION_SCAN - scanned)
+                page_query = query.limit(page_limit)
+                if cursor is not None:
+                    page_query = page_query.start_after(cursor)
+                page = list(page_query.stream())
+                if not page:
+                    break
+
+                scanned += len(page)
+                cursor = page[-1]
+                for document in page:
+                    conversation = self._from_data(
+                        document.to_dict() or {}, user_id=user_id
+                    )
+                    if conversation.turn_count > 0:
+                        conversations.append(conversation)
+                        if len(conversations) == requested_limit:
+                            return conversations
+
+                if len(page) < page_limit:
+                    break
+
+            return conversations
+        except ConversationOwnershipError:
+            raise
+        except Exception as exc:
+            raise RepositoryUnavailableError(
+                "Firestore could not list conversations."
+            ) from exc
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = DEFAULT_CONVERSATION_LIST_LIMIT,
+    ) -> list[ConversationMetadata]:
+        return await asyncio.to_thread(self._list_sync, user_id, limit)
 
     @staticmethod
     def _from_data(

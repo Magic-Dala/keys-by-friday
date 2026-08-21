@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from backend.app.repositories.firestore import (
     FirestoreConversationRepository,
     FirestoreShortlistRepository,
+    _document_id,
+    _owner_hash,
 )
 
 
@@ -49,6 +52,12 @@ class _FakeCollection:
     def document(self, document_id: str) -> _FakeDocument:
         return _FakeDocument(self._client, (*self.path, document_id))
 
+    def where(self, field: str, operator: str, value: object) -> _FakeQuery:
+        self._client.queries += 1
+        return _FakeQuery(self._client, self.path).where(
+            field, operator, value
+        )
+
     def order_by(self, field: str, *, direction: str) -> _FakeQuery:
         self._client.queries += 1
         return _FakeQuery(self._client, self.path, field, direction)
@@ -59,17 +68,34 @@ class _FakeQuery:
         self,
         client: _FakeFirestoreClient,
         collection_path: tuple[str, ...],
-        field: str,
-        direction: str,
+        field: str | None = None,
+        direction: str = "ASCENDING",
     ) -> None:
         self._client = client
         self._collection_path = collection_path
         self._field = field
         self._direction = direction
+        self._filters: list[tuple[str, str, object]] = []
         self._limit: int | None = None
+        self._start_after: _FakeSnapshot | None = None
+
+    def where(self, field: str, operator: str, value: object) -> _FakeQuery:
+        self._filters.append((field, operator, value))
+        return self
+
+    def order_by(self, field: str, *, direction: str) -> _FakeQuery:
+        self._field = field
+        self._direction = direction
+        return self
 
     def limit(self, count: int) -> _FakeQuery:
         self._limit = count
+        self._client.query_limits.append(count)
+        return self
+
+    def start_after(self, snapshot: _FakeSnapshot) -> _FakeQuery:
+        self._start_after = snapshot
+        self._client.start_after_calls += 1
         return self
 
     def stream(self) -> list[_FakeSnapshot]:
@@ -78,10 +104,30 @@ class _FakeQuery:
             for path, data in self._client.documents.items()
             if path[:-1] == self._collection_path
         ]
-        documents.sort(
-            key=lambda data: data[self._field],
-            reverse=self._direction == "DESCENDING",
-        )
+        for field, operator, value in self._filters:
+            if operator != "==":
+                raise AssertionError(f"Unsupported fake filter: {operator}")
+            documents = [
+                document for document in documents if document.get(field) == value
+            ]
+        if self._field is not None:
+            documents.sort(
+                key=lambda data: data[self._field],
+                reverse=self._direction == "DESCENDING",
+            )
+        if self._start_after is not None:
+            marker_id = (self._start_after.to_dict() or {}).get(
+                "conversationId"
+            )
+            marker_index = next(
+                (
+                    index
+                    for index, document in enumerate(documents)
+                    if document.get("conversationId") == marker_id
+                ),
+                len(documents) - 1,
+            )
+            documents = documents[marker_index + 1 :]
         if self._limit is not None:
             documents = documents[: self._limit]
         return [_FakeSnapshot(document) for document in documents]
@@ -106,6 +152,8 @@ class _FakeFirestoreClient:
         self.transaction_writes = 0
         self.queries = 0
         self.deletes = 0
+        self.query_limits: list[int] = []
+        self.start_after_calls = 0
 
     def collection(self, name: str) -> _FakeCollection:
         return _FakeCollection(self, (name,))
@@ -197,3 +245,113 @@ def test_firestore_adapters_persist_across_repository_instances(
     assert client.transaction_writes == 4
     assert client.queries == 2
     assert client.deletes == 1
+
+
+def _seed_conversation_document(
+    client: _FakeFirestoreClient,
+    conversation_id: str,
+    user_id: str,
+    updated_at: datetime,
+    turn_count: int,
+) -> None:
+    client.documents[
+        ("conversations", _document_id("conversation", conversation_id))
+    ] = {
+        "conversationId": conversation_id,
+        "ownerHash": _owner_hash(user_id),
+        "createdAt": updated_at - timedelta(minutes=1),
+        "updatedAt": updated_at,
+        "turnCount": turn_count,
+        "lastListings": [_listing(conversation_id)],
+        "lastCommuteStatus": "available",
+        "lastRouteListingId": None,
+    }
+
+
+def _listing(listing_id: str) -> dict[str, object]:
+    return {
+        "id": f"listing-{listing_id}",
+        "title": "Heatherstone Apartments",
+        "price": 3180,
+    }
+
+
+def test_firestore_conversation_list_is_user_scoped_ordered_bounded_and_successful_only() -> None:
+    client = _FakeFirestoreClient()
+    start = datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc)
+    _seed_conversation_document(client, "old", "user-a", start, 1)
+    _seed_conversation_document(
+        client, "new", "user-a", start + timedelta(minutes=1), 1
+    )
+    _seed_conversation_document(
+        client, "zero-turn", "user-a", start + timedelta(minutes=2), 0
+    )
+    _seed_conversation_document(
+        client, "other-user", "user-b", start + timedelta(minutes=3), 1
+    )
+
+    async def scenario():
+        repository = FirestoreConversationRepository(client)
+        return await repository.list_for_user("user-a", limit=2)
+
+    items = asyncio.run(scenario())
+
+    assert [item.conversation_id for item in items] == ["new", "old"]
+    assert all(item.user_id == "user-a" for item in items)
+    assert all(item.turn_count > 0 for item in items)
+
+
+def test_firestore_conversation_list_pages_past_zero_turn_records() -> None:
+    client = _FakeFirestoreClient()
+    start = datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc)
+    _seed_conversation_document(
+        client, "old-success", "user-a", start, 1
+    )
+    _seed_conversation_document(
+        client, "new-success", "user-a", start + timedelta(minutes=1), 1
+    )
+    for index in range(20):
+        _seed_conversation_document(
+            client,
+            f"new-zero-turn-{index}",
+            "user-a",
+            start + timedelta(minutes=index + 2),
+            0,
+        )
+
+    async def scenario():
+        repository = FirestoreConversationRepository(client)
+        return await repository.list_for_user("user-a", limit=2)
+
+    items = asyncio.run(scenario())
+
+    assert [item.conversation_id for item in items] == [
+        "new-success",
+        "old-success",
+    ]
+    assert client.query_limits == [20, 20]
+    assert client.start_after_calls == 1
+
+
+def test_firestore_conversation_list_uses_batch_pages_for_small_limits() -> None:
+    client = _FakeFirestoreClient()
+    start = datetime(2026, 8, 20, 18, 0, tzinfo=timezone.utc)
+    for index in range(21):
+        _seed_conversation_document(
+            client,
+            f"new-zero-turn-{index}",
+            "user-a",
+            start + timedelta(minutes=index + 1),
+            0,
+        )
+    _seed_conversation_document(client, "old-success", "user-a", start, 1)
+
+    async def scenario():
+        repository = FirestoreConversationRepository(client)
+        return await repository.list_for_user("user-a", limit=1)
+
+    items = asyncio.run(scenario())
+
+    assert [item.conversation_id for item in items] == ["old-success"]
+    assert client.query_limits == [20, 20]
+    assert client.start_after_calls == 1

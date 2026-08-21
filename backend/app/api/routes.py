@@ -1,10 +1,19 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    status,
+)
 
 from backend.app.auth import AuthenticatedUser, get_current_user
 from backend.app.models.search import (
     ComparisonRequest,
+    RecentSearchesResponse,
     RouteDetailResponse,
     SaveShortlistRequest,
     SearchRequest,
@@ -14,12 +23,21 @@ from backend.app.models.search import (
     ShortlistResponse,
     UpdateShortlistRequest,
 )
+from backend.app.repositories.base import (
+    DEFAULT_CONVERSATION_LIST_LIMIT,
+    MAX_CONVERSATION_LIST_LIMIT,
+)
 from backend.app.services.agent_service import (
     AgentService,
     AgentServiceError,
     ConversationAccessError,
     PersistenceUnavailableError,
     get_agent_service,
+)
+from backend.app.services.conversation_service import (
+    ConversationService,
+    RecentSearchesPersistenceUnavailableError,
+    get_conversation_service,
 )
 from backend.app.services.shortlist_service import (
     ShortlistConversationAccessError,
@@ -91,6 +109,29 @@ async def selected_route(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Route service is temporarily unavailable.",
+        ) from exc
+
+
+@router.get(
+    "/conversations",
+    response_model=RecentSearchesResponse,
+    tags=["conversations"],
+)
+async def list_conversations(
+    limit: int = Query(
+        default=DEFAULT_CONVERSATION_LIST_LIMIT,
+        ge=1,
+        le=MAX_CONVERSATION_LIST_LIMIT,
+    ),
+    user: AuthenticatedUser = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+) -> RecentSearchesResponse:
+    try:
+        return await service.list_for_user(user.uid, limit=limit)
+    except RecentSearchesPersistenceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Conversation storage is temporarily unavailable.",
         ) from exc
 
 

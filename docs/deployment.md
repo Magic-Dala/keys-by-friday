@@ -221,8 +221,11 @@ project enforces the same boundary as the repository:
 ```bash
 npm install --global firebase-tools
 firebase login
-firebase deploy --only firestore:rules --project "$KBF_PROJECT_ID"
+firebase deploy --only firestore --project "$KBF_PROJECT_ID"
 ```
+
+This deploys both the deny-all client rules and the committed Recent Searches
+composite index from `firestore.indexes.json`.
 
 The deploy must finish with a successful Firestore Rules release. Then open
 **Firebase Console → Firestore Database → Rules** for `KBF_PROJECT_ID` and

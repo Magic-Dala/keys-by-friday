@@ -58,6 +58,11 @@ This is intentional. Firestore stores application data designed by this team.
 The ADK database stores ADK's own internal session tables using Google's
 official `DatabaseSessionService`.
 
+The backend's Recent Searches endpoint reads only Firestore's lightweight
+conversation metadata. It does not duplicate, return, or reconstruct the full
+ADK event history; that history remains separately owned by the configured ADK
+session database.
+
 Do not manually create or edit the ADK tables. The installed ADK version creates
 and manages its schema.
 
