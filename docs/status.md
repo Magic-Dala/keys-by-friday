@@ -91,6 +91,7 @@ Next.js Frontend
 - ✅ Authentication configuration included in readiness checks
 - ✅ Backend Firestore client factory and repository interfaces
 - ✅ Durable conversation ownership and normalized result metadata
+- ✅ Authenticated, bounded Recent Searches metadata API with user-scoped ordering and zero-turn exclusion
 - ✅ Backend-owned shortlist save, list, and remove APIs
 - ✅ Shortlist snapshots preserve structured coordinate and commute evidence
 - ✅ Fake in-memory repositories cover persistence without cloud quota in CI
@@ -117,7 +118,7 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 166 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 190 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12

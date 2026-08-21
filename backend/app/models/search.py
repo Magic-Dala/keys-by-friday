@@ -121,6 +121,19 @@ class SearchResponse(BaseModel):
     mode: Literal["adk", "stub"]
 
 
+class RecentSearchResponse(BaseModel):
+    conversationId: str
+    createdAt: datetime
+    updatedAt: datetime
+    turnCount: int = Field(ge=1)
+    listings: list[ListingResponse] = Field(default_factory=list)
+    lastCommuteStatus: str | None = None
+
+
+class RecentSearchesResponse(BaseModel):
+    items: list[RecentSearchResponse] = Field(default_factory=list)
+
+
 class SaveShortlistRequest(BaseModel):
     listingId: str = Field(min_length=1, max_length=256)
     conversationId: str = Field(min_length=1, max_length=128)

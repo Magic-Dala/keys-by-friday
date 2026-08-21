@@ -5,6 +5,15 @@ from datetime import datetime
 from typing import Any, Protocol
 
 
+DEFAULT_CONVERSATION_LIST_LIMIT = 20
+MAX_CONVERSATION_LIST_LIMIT = 50
+MAX_CONVERSATION_SCAN = 200
+
+
+def bounded_conversation_limit(limit: int) -> int:
+    return min(max(limit, 1), MAX_CONVERSATION_LIST_LIMIT)
+
+
 class RepositoryError(RuntimeError):
     """Base error for persistence operations."""
 
@@ -43,6 +52,12 @@ class ShortlistItem:
 
 
 class ConversationRepository(Protocol):
+    async def list_for_user(
+        self,
+        user_id: str,
+        limit: int = DEFAULT_CONVERSATION_LIST_LIMIT,
+    ) -> list[ConversationMetadata]: ...
+
     async def claim(
         self, conversation_id: str, user_id: str
     ) -> ConversationMetadata: ...
