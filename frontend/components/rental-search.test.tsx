@@ -22,13 +22,17 @@ vi.mock("@/lib/api", () => ({
   saveShortlistItem: vi.fn(),
   sendChat: vi.fn(),
 }));
-vi.mock("@/lib/firebase-auth", () => ({
-  createAccountWithEmail: vi.fn(),
-  observeFirebaseUser: vi.fn(),
-  signInWithEmail: vi.fn(),
-  signInWithGoogle: vi.fn(),
-  signOutToAnonymous: vi.fn(),
-}));
+vi.mock("@/lib/firebase-auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/firebase-auth")>();
+  return {
+    ...actual,
+    createAccountWithEmail: vi.fn(),
+    observeFirebaseUser: vi.fn(),
+    signInWithEmail: vi.fn(),
+    signInWithGoogle: vi.fn(),
+    signOutToAnonymous: vi.fn(),
+  };
+});
 vi.mock("@/lib/google-maps", () => ({ loadGoogleMaps: loadGoogleMapsMock }));
 
 const mapInstances: TestMap[] = [];
@@ -115,6 +119,7 @@ beforeEach(() => {
   vi.mocked(signOutToAnonymous).mockReset();
   loadGoogleMapsMock.mockReset();
   mapInstances.length = 0;
+  vi.stubEnv("NEXT_PUBLIC_AUTH_MODE", "firebase");
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "");
 });
 
@@ -369,6 +374,23 @@ it("resets rental state and refetches the shortlist when UID changes", async () 
   expect(screen.queryByRole("heading", { name: "Heatherstone" })).not.toBeInTheDocument();
   expect(screen.getByText("Nothing saved yet")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Compare the details that matter" })).not.toBeInTheDocument();
+});
+
+it("loads the shortlist when auth is disabled and no Firebase user is observed", async () => {
+  vi.stubEnv("NEXT_PUBLIC_AUTH_MODE", "disabled");
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    listener(null);
+    return vi.fn();
+  });
+  vi.mocked(getShortlist).mockResolvedValue({
+    items: [{ listing: searchResponse.listings[0], sourceConversationId: "local-conversation", savedAt: "", updatedAt: "" }],
+  });
+
+  render(<RentalSearch />);
+
+  expect(await screen.findByText("1 saved")).toBeVisible();
+  expect(screen.getByText("Heatherstone")).toBeVisible();
+  expect(getShortlist).toHaveBeenCalledTimes(1);
 });
 
 afterEach(() => {

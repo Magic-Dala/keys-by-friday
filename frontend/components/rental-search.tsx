@@ -28,6 +28,7 @@ import {
 } from "@/lib/api";
 import {
   createAccountWithEmail,
+  getAuthIdentityKey,
   observeFirebaseUser,
   signInWithEmail,
   signInWithGoogle,
@@ -106,6 +107,7 @@ export function RentalSearch() {
   const routeSelection = useRouteSelection(conversationId);
   const isMobileViewport = useMobileViewport();
   const mapVisible = isMobileViewport === false || (isMobileViewport === true && mobileResultsView === "map");
+  const authIdentityKey = getAuthIdentityKey(authUser);
 
   function isCurrentIdentity(generation: number) {
     return identityGenerationRef.current === generation;
@@ -142,7 +144,7 @@ export function RentalSearch() {
   useEffect(() => observeFirebaseUser(setAuthUser), []);
 
   useEffect(() => {
-    const uid = authUser?.uid;
+    const uid = authIdentityKey;
     const previousUid = activeFirebaseUidRef.current;
 
     if (!uid) {
@@ -182,7 +184,7 @@ export function RentalSearch() {
       controller.abort();
       if (shortlistRequestRef.current === controller) shortlistRequestRef.current = null;
     };
-  }, [authUser?.uid]);
+  }, [authIdentityKey]);
 
   useEffect(() => () => {
     abortChatRequest();

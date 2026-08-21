@@ -28,6 +28,10 @@ function authMode(): AuthMode {
   return mode;
 }
 
+export function getAuthIdentityKey(user: User | null | undefined): string | undefined {
+  return authMode() === "disabled" ? "local-user" : user?.uid;
+}
+
 function requiredPublicSetting(name: string, value: string | undefined): string {
   const normalized = value?.trim();
   if (!normalized) throw new Error(`${name} is required when Firebase auth is enabled.`);
