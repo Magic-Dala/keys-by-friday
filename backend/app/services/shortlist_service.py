@@ -13,6 +13,7 @@ from backend.app.repositories.base import (
     ConversationRepository,
     RepositoryError,
     ShortlistItem,
+    ShortlistItemNotFoundError,
     ShortlistRepository,
 )
 from backend.app.repositories.dependencies import (
@@ -41,10 +42,15 @@ class ShortlistPersistenceUnavailableError(ShortlistServiceError):
     """The configured repository could not complete the request."""
 
 
+class ShortlistItemMissingError(ShortlistServiceError):
+    """The requested saved listing does not exist."""
+
+
 def _response(item: ShortlistItem) -> ShortlistItemResponse:
     return ShortlistItemResponse(
         listing=ListingResponse.model_validate(item.listing_snapshot),
         sourceConversationId=item.source_conversation_id,
+        note=item.note,
         savedAt=item.saved_at,
         updatedAt=item.updated_at,
     )
@@ -124,6 +130,23 @@ class ShortlistService:
         except RepositoryError as exc:
             raise ShortlistPersistenceUnavailableError(
                 "Shortlist item could not be removed."
+            ) from exc
+
+    async def update_note(
+        self, user_id: str, listing_id: str, note: str | None
+    ) -> ShortlistItemResponse:
+        try:
+            item = await self._shortlist.update_note(
+                user_id, listing_id, note
+            )
+            return _response(item)
+        except ShortlistItemNotFoundError as exc:
+            raise ShortlistItemMissingError(
+                "Shortlist item was not found."
+            ) from exc
+        except (RepositoryError, ValueError) as exc:
+            raise ShortlistPersistenceUnavailableError(
+                "Shortlist item could not be updated."
             ) from exc
 
 

@@ -100,15 +100,19 @@ Next.js Frontend
 - ✅ `/ready` verifies a real ADK database lookup before serving production traffic
 - ✅ Same-conversation turns serialized to prevent stale simultaneous follow-ups
 - ✅ Python 3.12 pinned consistently for macOS development and the backend container
+- ✅ Frozen `kbf.canonical-listing.v1` objects preserved through API and Firestore snapshots
+- ✅ `POST /api/compare` returns and persists `kbf.canonical-comparison.v1`
+- ✅ Frontend comparison uses deterministic facts plus a separate Gemini explanation
+- ✅ Explicit comparison unknowns remain unknown instead of becoming guessed facts
+- ✅ Comparison responses refresh selected canonical listing snapshots without dropping unselected persisted results
+- ✅ Complete shortlist CRUD with authenticated note updates
 
 ## In Progress / Next Product Work
 
 - 🔄 Improve frontend rental-result UX beyond the basic listing cards
 - 🔄 Expose Agent activity metadata through a backend/frontend progress transport
-- 🔄 Connect comparison intelligence into the final web UX
 - 🔄 Run a live Google Routes smoke test with a restricted Maps key
 - 🔄 Present structured commute/map evidence in the product frontend
-- 🔄 Comparison UX exists; richer shortlist notes and cross-session ADK restoration remain later work
 - 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
@@ -117,13 +121,14 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
 
-- ✅ Full Python / Backend / Agent suite: 166 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 196 passed, including Firebase auth, Firestore persistence, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
 - ✅ Next.js production build passed
+- ✅ Frontend suite: 6 files / 30 tests passed, including the structured comparison interaction
 - ✅ TypeScript typecheck passed
 - ✅ Frontend page rendered locally
 - ✅ Backend health endpoint responded successfully

@@ -1389,6 +1389,110 @@ def _soft_preference_evidence(
     result: list[dict[str, object]] = []
     for preference in preferences:
         normalized = preference.strip().casefold()
+        if normalized in {"in-unit laundry", "in unit laundry"}:
+            amenities = {
+                amenity.strip().casefold(): amenity
+                for amenity in listing.amenities
+                if amenity.strip()
+            }
+            installed_laundry_names = {
+                "in-unit washer/dryer",
+                "in unit washer/dryer",
+                "in-unit laundry",
+                "in unit laundry",
+                "in-apartment laundry",
+                "in apartment laundry",
+            }
+            installed_laundry = next(
+                (
+                    original
+                    for folded, original in amenities.items()
+                    if folded in installed_laundry_names
+                ),
+                None,
+            )
+            if installed_laundry is not None:
+                result.append(
+                    {
+                        "preference": preference,
+                        "status": "supported",
+                        "evidence": [
+                            {"field": "amenities", "match": installed_laundry}
+                        ],
+                    }
+                )
+                continue
+
+            ambiguous_laundry_names = {
+                "washer/dryer",
+                "washer and dryer",
+            }
+            ambiguous_laundry = next(
+                (
+                    original
+                    for folded, original in amenities.items()
+                    if folded in ambiguous_laundry_names
+                ),
+                None,
+            )
+            if ambiguous_laundry is not None:
+                result.append(
+                    {
+                        "preference": preference,
+                        "status": "evidence_only",
+                        "evidence": [
+                            {"field": "amenities", "match": ambiguous_laundry}
+                        ],
+                    }
+                )
+                continue
+
+            laundry_hookup = next(
+                (
+                    original
+                    for folded, original in amenities.items()
+                    if "hookup" in folded
+                    and ("washer" in folded or "laundry" in folded)
+                ),
+                None,
+            )
+            if laundry_hookup is not None:
+                result.append(
+                    {
+                        "preference": preference,
+                        "status": "evidence_only",
+                        "evidence": [
+                            {"field": "amenities", "match": laundry_hookup}
+                        ],
+                    }
+                )
+                continue
+
+            description_evidence = _matched_text_evidence(
+                listing,
+                (
+                    "in-unit laundry",
+                    "in unit laundry",
+                    "in-apartment laundry",
+                    "in apartment laundry",
+                    "in-unit washer/dryer",
+                ),
+            )
+            if description_evidence:
+                result.append(
+                    {
+                        "preference": preference,
+                        "status": "evidence_only",
+                        "evidence": description_evidence,
+                    }
+                )
+                continue
+
+            result.append(
+                {"preference": preference, "status": "unknown", "evidence": []}
+            )
+            continue
+
         if normalized not in supported_phrases:
             result.append({"preference": preference, "status": "unknown", "evidence": []})
             continue
