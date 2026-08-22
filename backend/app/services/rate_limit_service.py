@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Callable
 
-from fastapi import HTTPException, Request, status
+from fastapi import Request
 
 from backend.app.auth import AuthenticatedUser
 from backend.app.config import Settings, get_settings
@@ -22,15 +22,21 @@ class RateLimitStorageUnavailableError(RuntimeError):
 class AnonymousSearchRateLimitService:
     def __init__(
         self,
-        repository: RateLimitRepository,
+        repository: RateLimitRepository | None = None,
         *,
+        repository_factory: Callable[[], RateLimitRepository] | None = None,
         limit: int,
         window_seconds: int,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         if limit <= 0 or window_seconds <= 0:
             raise ValueError("Rate-limit values must be greater than zero.")
+        if repository is None and repository_factory is None:
+            raise ValueError(
+                "A rate-limit repository or repository factory is required."
+            )
         self._repository = repository
+        self._repository_factory = repository_factory
         self.limit = limit
         self.window_seconds = window_seconds
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -41,7 +47,16 @@ class AnonymousSearchRateLimitService:
         if (user.sign_in_provider or "").casefold() != "anonymous":
             return None
         try:
-            return await self._repository.consume(
+            repository = self._repository
+            if repository is None:
+                repository_factory = self._repository_factory
+                if repository_factory is None:
+                    raise RepositoryError(
+                        "Rate-limit repository factory is unavailable."
+                    )
+                repository = repository_factory()
+                self._repository = repository
+            return await repository.consume(
                 user.uid,
                 limit=self.limit,
                 window_seconds=self.window_seconds,
@@ -68,18 +83,8 @@ async def get_anonymous_search_rate_limit_service(
         return existing
 
     settings = _settings_for_request(request)
-    try:
-        repository = create_rate_limit_repository(settings)
-    except RepositoryError as exc:
-        # Dependency creation happens before the route function runs, so map
-        # this failure here instead of relying on the route-level guard.
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Anonymous request limits are temporarily unavailable.",
-        ) from exc
-
     service = AnonymousSearchRateLimitService(
-        repository,
+        repository_factory=lambda: create_rate_limit_repository(settings),
         limit=settings.anonymous_search_rate_limit,
         window_seconds=settings.anonymous_search_rate_window_seconds,
     )

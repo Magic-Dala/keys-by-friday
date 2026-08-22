@@ -125,14 +125,14 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 As of the current Agent decision-intelligence, persistence, Firebase-auth, and
 anonymous rate-limit integration work:
 
-- ✅ Full Python / Backend / Agent suite: 207 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, anonymous rate limiting, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 216 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, anonymous rate limiting, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
 - ✅ Next.js production build passed
-- ✅ Frontend suite: 7 files / 51 tests passed, including Firebase auth and the structured comparison interaction
+- ✅ Frontend suite: 10 files / 78 tests passed, including Firebase auth, Recent Searches, and the structured comparison interaction
 - ✅ TypeScript typecheck passed
 - ✅ Frontend page rendered locally
 - ✅ Backend health endpoint responded successfully

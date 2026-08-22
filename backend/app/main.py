@@ -48,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["DELETE", "GET", "PATCH", "POST"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
         expose_headers=[
+            "Retry-After",
             "X-RateLimit-Limit",
             "X-RateLimit-Remaining",
             "X-RateLimit-Reset",

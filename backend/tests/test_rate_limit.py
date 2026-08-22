@@ -114,7 +114,11 @@ def test_anonymous_chat_is_limited_before_agent_execution() -> None:
         headers={"Origin": "http://localhost:3000"},
     )
     second = client.post("/api/chat", json={"message": "Add parking"})
-    blocked = client.post("/api/chat", json={"message": "Add a cat"})
+    blocked = client.post(
+        "/api/chat",
+        json={"message": "Add a cat"},
+        headers={"Origin": "http://localhost:3000"},
+    )
 
     assert invalid.status_code == 422
     assert first.status_code == 200
@@ -126,6 +130,7 @@ def test_anonymous_chat_is_limited_before_agent_execution() -> None:
     assert blocked.status_code == 429
     assert blocked.headers["X-RateLimit-Remaining"] == "0"
     assert int(blocked.headers["Retry-After"]) > 0
+    assert "Retry-After" in blocked.headers["Access-Control-Expose-Headers"]
     assert agent.chat_calls == 2
 
 
@@ -213,6 +218,42 @@ def test_rate_limit_repository_initialization_failure_returns_stable_503(
         "detail": "Anonymous request limits are temporarily unavailable."
     }
     assert agent.chat_calls == 0
+
+
+def test_non_anonymous_user_bypasses_repository_initialization_failure(
+    monkeypatch,
+) -> None:
+    from backend.app.services import rate_limit_service
+
+    application = create_app(
+        Settings(
+            agent_mode="stub",
+            auth_mode="firebase",
+            firebase_project_id="test-project",
+            persistence_mode="memory",
+        )
+    )
+    agent = _CountingAgent()
+    application.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="user-a", sign_in_provider="google.com"
+    )
+    application.dependency_overrides[get_agent_service] = lambda: agent
+
+    def fail_to_create_repository(settings):
+        raise RepositoryUnavailableError("private setup error")
+
+    monkeypatch.setattr(
+        rate_limit_service,
+        "create_rate_limit_repository",
+        fail_to_create_repository,
+    )
+
+    response = TestClient(application).post(
+        "/api/chat", json={"message": "Find rentals"}
+    )
+
+    assert response.status_code == 200
+    assert agent.chat_calls == 1
 
 
 def test_memory_limit_is_atomic_and_resets_after_the_window() -> None:
