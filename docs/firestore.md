@@ -58,6 +58,22 @@ The metadata stores the latest normalized listing results, including available
 coordinates and commute summaries. It does not store the full prompt, Agent
 answer, ADK event trace, provider response, API key, or Maps route polyline.
 
+### Recent Searches metadata
+
+```text
+GET /api/conversations?limit=20 with verified Firebase uid
+→ authenticated FastAPI route
+→ conversation service
+→ repository queries conversations by ownerHash
+→ returns successful metadata ordered by updatedAt descending
+```
+
+Recent Searches excludes claimed-but-unsuccessful conversations whose
+`turnCount` is zero. It returns the existing latest normalized listing snapshots
+and commute metadata without copying or exposing the full ADK conversation
+history. The default response is bounded to 20 items and the API accepts limits
+from 1 through 50.
+
 ### Save a listing
 
 ```text
@@ -149,6 +165,7 @@ Durable now:
 - conversation ownership;
 - conversation timestamps and successful turn count;
 - latest normalized listing snapshots;
+- lightweight user-scoped Recent Searches metadata;
 - shortlist items, including available commute summaries.
 
 Stored separately by the configured ADK SessionService:
@@ -214,11 +231,12 @@ Firebase CLI and publish the configured rules target:
 ```bash
 npm install --global firebase-tools
 firebase login
-firebase deploy --only firestore:rules --project 'your-existing-google-cloud-project-id'
+firebase deploy --only firestore --project 'your-existing-google-cloud-project-id'
 ```
 
-The command reads `firebase.json`, compiles `firestore.rules`, and must finish
-with a successful Firestore Rules release. Verify the deployed project in
+The command reads `firebase.json`, deploys the deny-all rules and the committed
+Recent Searches composite index, and must finish with a successful Firestore
+release. Verify the deployed project in
 **Firebase Console → Firestore Database → Rules** and confirm it contains:
 
 ```text
@@ -268,10 +286,11 @@ uv run --extra dev --extra backend pytest \
   -q
 ```
 
-Desired output ends with:
+Desired output should report all selected tests passing; the exact count changes
+as repository and API contract coverage grows.
 
 ```text
-10 passed
+passed
 ```
 
 The test scenarios prove:
@@ -426,18 +445,25 @@ service account.
 
 ## Index decision
 
-No custom `firestore.indexes.json` file is included.
+Recent Searches filters the `conversations` collection by the hashed
+`ownerHash` and orders by `updatedAt` descending. The exact composite index is
+checked in as `firestore.indexes.json` and wired into `firebase.json`:
 
-Current access patterns are:
+```json
+{
+  "collectionGroup": "conversations",
+  "queryScope": "COLLECTION",
+  "fields": [
+    {"fieldPath": "ownerHash", "order": "ASCENDING"},
+    {"fieldPath": "updatedAt", "order": "DESCENDING"}
+  ]
+}
+```
 
-- exact conversation document read/write by hashed ID;
-- exact shortlist item read/write/delete by hashed ID;
-- one user's shortlist ordered by the single `savedAt` field.
-
-Firestore supplies automatic single-field indexes, so these operations do not
-need a custom composite index. Add a custom index only when a future query
-combines fields in a way Firestore reports as requiring one—for example, a
-cross-user administrative query filtering by status and ordering by time.
+The query never uses a raw Firebase UID. It pages with an internal batch size
+of at least 20 documents, carries the last Firestore document snapshot as the
+cursor, and scans at most 200 documents before excluding zero-turn records and
+returning up to the requested successful results.
 
 ## Common results
 

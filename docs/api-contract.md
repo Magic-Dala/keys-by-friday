@@ -96,6 +96,38 @@ When `AUTH_MODE=firebase`, a missing or invalid Firebase ID token returns HTTP
 returns HTTP `403`. The request body never accepts a user ID; identity comes only
 from the verified token.
 
+## Recent Searches
+
+```http
+GET /api/conversations?limit=20
+Authorization: Bearer <Firebase-ID-token>
+```
+
+Returns up to 20 of the verified user's successful conversation metadata records,
+newest first by `updatedAt`. The optional `limit` query parameter must be between
+1 and 50. The endpoint does not accept a UID or user ID; any user identity comes
+exclusively from the verified Firebase bearer token.
+
+```json
+{
+  "items": [
+    {
+      "conversationId": "abc123",
+      "createdAt": "2026-08-20T18:00:00Z",
+      "updatedAt": "2026-08-20T18:15:00Z",
+      "turnCount": 4,
+      "listings": [],
+      "lastCommuteStatus": "available"
+    }
+  ]
+}
+```
+
+Each item contains only timestamps, successful turn count, the latest normalized
+listing snapshots, and the latest commute status. Full chat transcripts and ADK
+event history remain in the separately owned ADK session database and are not
+returned by this endpoint.
+
 ## Selected Route
 
 ```http
@@ -173,6 +205,7 @@ The backend may normalize internal Agent fields into this web shape.
 ## Rules
 
 - `/api/chat` is the primary user interaction endpoint.
+- `/api/conversations` may list only lightweight metadata for the verified user.
 - `/api/route` may read only the verified user's conversation state.
 - `/api/compare` may compare only candidates in the verified user's conversation.
 - `/api/shortlist` may read or change only the verified user's shortlist.

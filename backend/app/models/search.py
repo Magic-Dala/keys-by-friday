@@ -220,6 +220,19 @@ class SearchResponse(BaseModel):
     mode: Literal["adk", "stub"]
 
 
+class RecentSearchResponse(BaseModel):
+    conversationId: str
+    createdAt: datetime
+    updatedAt: datetime
+    turnCount: int = Field(ge=1)
+    listings: list[ListingResponse] = Field(default_factory=list)
+    lastCommuteStatus: str | None = None
+
+
+class RecentSearchesResponse(BaseModel):
+    items: list[RecentSearchResponse] = Field(default_factory=list)
+
+
 class ComparisonRequest(BaseModel):
     listingIds: list[str] = Field(min_length=2, max_length=4)
     conversationId: str = Field(min_length=1, max_length=128)
