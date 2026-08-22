@@ -71,6 +71,10 @@ def get_rate_limit_repository() -> RateLimitRepository:
 
 def create_rate_limit_repository(settings: Settings) -> RateLimitRepository:
     if settings.persistence_mode == "memory":
+        if settings.app_environment == "production":
+            raise RepositoryUnavailableError(
+                "Production rate limits require Firestore persistence."
+            )
         return MemoryRateLimitRepository()
     if not settings.firestore_project_id:
         raise RepositoryUnavailableError(

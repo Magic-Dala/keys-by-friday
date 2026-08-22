@@ -45,6 +45,7 @@ _CACHE_PROVIDER_STATE_KEY = "rental_search_cache_provider"
 _CACHE_COMPLETE_STATE_KEY = "rental_search_cache_complete"
 _CACHE_FAILED_SOURCES_STATE_KEY = "rental_search_cache_failed_sources"
 _VERIFIED_STATE_KEY = "rental_verified_details"
+_SEARCH_RESULT_LIMIT = 20
 _COMPARISON_LIMIT = 4
 _ACTIVITY_SCHEMA = "rental.agent_activity.v1"
 _CANONICAL_LISTING_SCHEMA = "kbf.canonical-listing.v1"
@@ -132,7 +133,7 @@ def _requirements_from_dict(value: object) -> SearchRequirements | None:
         soft_preferences=tuple(
             str(item) for item in (value.get("soft_preferences") or []) if str(item)
         ),
-        limit=int(value.get("limit") or 50),
+        limit=min(max(1, int(value.get("limit") or _SEARCH_RESULT_LIMIT)), _SEARCH_RESULT_LIMIT),
     )
 
 
@@ -227,7 +228,7 @@ def _merge_requirements(
         soft_preferences=_merge_soft_preferences(
             prior_soft, soft_preferences, reset_search=reset_search
         ),
-        limit=50,
+        limit=_SEARCH_RESULT_LIMIT,
     )
 
 
@@ -913,7 +914,7 @@ def search_listings(
         cached_scope = _requirements_from_dict(
             tool_context.state.get(_CACHE_SCOPE_STATE_KEY)
         )
-        cached_raw = _cached_listings(tool_context.state.get(_RAW_CACHE_STATE_KEY))
+        cached_raw = _cached_listings(tool_context.state.get(_RAW_CACHE_STATE_KEY))[:_SEARCH_RESULT_LIMIT]
         provider_value = tool_context.state.get(_CACHE_PROVIDER_STATE_KEY)
         cached_provider = str(provider_value) if provider_value else None
         cached_complete = tool_context.state.get(_CACHE_COMPLETE_STATE_KEY) is True
@@ -928,7 +929,7 @@ def search_listings(
         if cached_scope is None and previous is not None and not reset_search:
             legacy_candidates = _cached_candidate_listings(
                 tool_context.state.get(_CANDIDATES_STATE_KEY)
-            )
+            )[:_SEARCH_RESULT_LIMIT]
             if legacy_candidates:
                 cached_scope = previous
                 cached_raw = legacy_candidates
@@ -950,7 +951,7 @@ def search_listings(
         and cached_complete
         and _is_narrower_or_equal(req, cached_scope)
     )
-    normalized = cached_raw if use_cache else []
+    normalized = cached_raw[:_SEARCH_RESULT_LIMIT] if use_cache else []
     commutes = _compute_commutes(normalized, req) if use_cache else {}
     ranked = (
         filter_and_rank(
@@ -978,7 +979,7 @@ def search_listings(
     failed_sources = list(cached_failed_sources)
     if needs_provider:
         provider = get_provider()
-        normalized = provider.search(req)
+        normalized = provider.search(req)[:_SEARCH_RESULT_LIMIT]
         provider_health = provider.health()
         provider_name = str(provider_health["provider"])
         failed_value = provider_health.get("failed_sources", [])
@@ -2133,6 +2134,9 @@ Candidate-first behavior:
 5. For every initial or refined search, call search_listings exactly once. The tool is
    cache-first: narrower/equal refinements reuse session data and do not call RealtyAPI
    when cached candidates can satisfy the new hard constraints.
+5b. Search results are intentionally bounded to at most 20 source postings per search
+    workflow to control provider/model context cost. Do not bypass this bound with repeated
+    searches. Ask the user to refine requirements instead when they need a narrower set.
 6. Pass force_refresh=True only when the user explicitly asks to refresh, search again
    from the source, or fetch fresh listings. Do NOT use it for normal refinements.
 7. Do NOT automatically call get_listing_details after a broad search.
@@ -2148,6 +2152,9 @@ Candidate-first behavior:
 11. Use get_listing_details only when the user asks about a specific property/source
     posting, asks to compare a small subset, or has narrowed results enough that
     verification is useful. Never verify the whole candidate set automatically.
+11a. For a normal detail question, call get_listing_details at most once in that user
+     request. For multi-property comparison, use compare_candidates, which enforces its
+     own bounded selected-only verification instead of issuing repeated detail calls.
 12. A verified candidate with passes_current_hard_filters=false must not be presented
     as satisfying the current hard constraints.
 12a. Use get_route_details only for a selected/specific listing when route geometry or

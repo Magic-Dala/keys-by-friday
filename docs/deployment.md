@@ -279,11 +279,11 @@ gcloud secrets add-iam-policy-binding kbf-adk-session-db-url \
 ## Deploy to Cloud Run
 
 Keep the Cloud Run service private for this milestone. Firebase verifies who owns
-a conversation, but anonymous Firebase users are inexpensive to create and do
-not prevent an attacker from repeatedly consuming Gemini, RealtyAPI, or Routes
-quota. Cloud Run IAM therefore remains the outer deployment boundary until the
-public path has distributed rate limiting, aggregate cost caps, and abuse
-monitoring.
+a conversation. The backend also applies distributed per-UID Agent request
+limits to anonymous and signed-in Firebase users, but anonymous identities are
+still inexpensive to recreate and `/api/route` has a separate Maps cost boundary.
+Cloud Run IAM therefore remains the outer deployment boundary until the public
+path also has aggregate cost caps and abuse monitoring.
 
 This gives the backend two different identity checks during private testing:
 
@@ -309,7 +309,7 @@ gcloud run deploy "$KBF_SERVICE" \
   --max-instances 1 \
   --timeout 180 \
   --add-cloudsql-instances "$KBF_CLOUD_SQL_CONNECTION_NAME" \
-  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),ADK_SESSION_MODE=database,LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,AGENT_TIMEOUT_SECONDS=120,ANONYMOUS_SEARCH_RATE_LIMIT=10,ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS=3600,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
+  --set-env-vars "APP_ENV=production,AGENT_MODE=adk,AUTH_MODE=firebase,FIREBASE_PROJECT_ID=${KBF_PROJECT_ID},PERSISTENCE_MODE=firestore,FIRESTORE_PROJECT_ID=${KBF_PROJECT_ID},FIRESTORE_DATABASE_ID=(default),ADK_SESSION_MODE=database,LISTING_PROVIDER=realtyapi,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_LOCATION=global,AGENT_TIMEOUT_SECONDS=120,ANONYMOUS_SEARCH_RATE_LIMIT=10,ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS=3600,AUTHENTICATED_SEARCH_RATE_LIMIT=30,AUTHENTICATED_SEARCH_RATE_WINDOW_SECONDS=86400,LOG_LEVEL=INFO,GOOGLE_CLOUD_PROJECT=${KBF_PROJECT_ID},FRONTEND_ORIGIN=${KBF_FRONTEND_ORIGIN}" \
   --set-secrets 'REALTYAPI_API_KEY=kbf-realtyapi-key:1,GOOGLE_MAPS_API_KEY=kbf-google-maps-api-key:1,ADK_SESSION_DATABASE_URL=kbf-adk-session-db-url:1'
 ```
 
@@ -350,10 +350,11 @@ required for live commute summaries and selected-route geometry. Restrict this
 key to the Google Routes API in Google Cloud Console. See `docs/maps.md` for the
 local and deployed Maps checks.
 
-Before making a later service public, confirm that Firebase is enabled and that
-the frontend sends Firebase ID tokens, then add server-side distributed limits
-for each uid plus an aggregate project-level cap. Provider quotas and billing
-alerts are additional safeguards; a billing alert alone does not stop requests.
+Before making a later service public, confirm that Firebase is enabled, the
+frontend sends Firebase ID tokens, and the distributed per-uid Agent limits remain
+enabled. Add an aggregate project-level cap and separate protection for the Routes
+API boundary. Provider quotas and billing alerts are additional safeguards; a
+billing alert alone does not stop requests.
 
 Firestore keeps conversation ownership/metadata and shortlists. ADK's official
 database session service keeps Agent events and state in Cloud SQL, so a restart

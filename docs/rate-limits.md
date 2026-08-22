@@ -1,29 +1,27 @@
-# Anonymous Search Rate Limits
+# Agent Request Rate Limits
 
-This guide explains the backend cost guard for Firebase anonymous users.
+This guide explains the backend cost guard for Firebase users.
 
 ## What problem this solves
 
 Every Agent turn can spend Gemini tokens and may call RealtyAPI. Without a
-limit, one anonymous browser could repeatedly send requests and consume the
-team's hackathon quota.
+limit, one browser or signed-in account could repeatedly send requests and
+consume the team's hackathon quota.
 
 The default policy is:
 
 ```text
-10 Agent-backed requests
-per Firebase anonymous uid
-per 3,600 seconds (one hour)
+Firebase anonymous uid  → 10 Agent-backed requests per 3,600 seconds (one hour)
+Signed-in Firebase uid  → 30 Agent-backed requests per 86,400 seconds (one day)
 ```
 
-`POST /api/chat` and `POST /api/compare` use the same allowance. A search,
-follow-up refinement, or comparison can all call Gemini, so they all count.
-`POST /api/route` is not part of this bucket because it has a different Maps
-cost boundary.
+`POST /api/chat` and `POST /api/compare` use the same allowance for a given
+user and identity class. A search, follow-up refinement, or comparison can all
+call Gemini, so they all count. `POST /api/route` is not part of this bucket
+because it has a different Maps cost boundary.
 
-Google or another non-anonymous sign-in provider bypasses this particular
-anonymous-user limit. Project quotas and abuse controls should still apply to
-all users.
+`AUTH_MODE=disabled` is a local-development mode and bypasses this external cost
+guard. Production authentication already rejects that mode.
 
 ## Easy example
 
@@ -50,16 +48,17 @@ Browser
       one Firestore counter
 ```
 
-If each instance used its own Python dictionary, a user could receive ten calls
-from instance A and another ten from instance B. A Firestore transaction makes
-all instances update the same counter atomically.
+If each instance used its own Python dictionary, the same user could receive a
+fresh allowance from each instance. A Firestore transaction makes all instances
+update the same counter atomically.
 
-Memory storage is still used locally and in automated tests. Production
-readiness already requires Firestore, so production rate limits are distributed.
+Memory storage is still used locally and in automated tests. In production, both
+readiness and the request path require distributed Firestore-backed rate-limit
+storage; a misconfigured memory store fails closed before Agent execution.
 
 ## Request behavior
 
-An accepted anonymous request includes:
+An accepted limited request includes:
 
 ```text
 X-RateLimit-Limit: 10
@@ -81,9 +80,9 @@ execution. A malformed request returning HTTP 422 does not consume allowance.
 An accepted request does consume allowance even if Gemini or RealtyAPI later
 fails, because external work may already have cost money.
 
-If Firestore cannot check the counter, anonymous Agent requests fail closed with
-HTTP 503. This avoids turning a storage outage into unlimited external spend.
-Non-anonymous users do not depend on this anonymous counter.
+If Firestore cannot create or update the counter, Firebase Agent requests fail
+closed with HTTP 503. This avoids turning a storage outage or production
+misconfiguration into unlimited external spend.
 
 ## Configuration
 
@@ -92,27 +91,22 @@ Add these values to the backend environment:
 ```dotenv
 ANONYMOUS_SEARCH_RATE_LIMIT=10
 ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS=3600
+AUTHENTICATED_SEARCH_RATE_LIMIT=30
+AUTHENTICATED_SEARCH_RATE_WINDOW_SECONDS=86400
 ```
 
-Both values must be positive whole numbers. Changing them does not require a
-code change.
+All values must be positive whole numbers. Changing them does not require a code
+change.
 
-For a quick local test, temporarily use:
+For a quick local Firebase test, temporarily use small values for the relevant
+identity class. Restart the backend after changing `.env`, because settings are
+loaded at process startup.
 
-```dotenv
-ANONYMOUS_SEARCH_RATE_LIMIT=2
-ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS=300
-```
-
-Restart the backend after changing `.env`, because settings are loaded at
-process startup.
-
-## Automated testing on macOS
+## Automated testing
 
 From the repository root:
 
 ```bash
-cd /Users/ayushiiamin/Documents/keys-by-friday
 uv run pytest backend/tests/test_rate_limit.py backend/tests/test_firestore_adapter.py -q
 ```
 
@@ -121,8 +115,9 @@ These tests verify:
 - the Agent is not called after the limit;
 - chat and comparison share a bucket;
 - invalid requests do not consume allowance;
-- signed-in non-anonymous users bypass the anonymous limit;
-- storage errors fail closed;
+- anonymous and signed-in users each have bounded policies;
+- local disabled-auth development remains unblocked;
+- storage errors and production memory-store misconfiguration fail closed;
 - simultaneous requests cannot exceed the allowance;
 - separate Firestore repository objects share the same counter;
 - windows reset at the expected time.
@@ -130,21 +125,32 @@ These tests verify:
 The tests use memory/fake Firestore and consume no Gemini, RealtyAPI, Maps, or
 Firestore quota.
 
-## Manual browser test on macOS
+## Manual browser test
 
-1. Set the temporary limit of two shown above.
+1. Temporarily lower the anonymous limit in `.env`.
 2. Start the product with `./kbf start`.
-3. Open `http://localhost:3000` in a browser using anonymous Firebase sign-in.
-4. Send two valid Agent messages. Both should work.
-5. Send a third message. It should show the stable HTTP 429 detail and should
-   not reach the Agent.
-6. In browser Developer Tools, open **Network**, select the request, and inspect
-   the `X-RateLimit-*` response headers.
+3. Open the frontend in a browser using anonymous Firebase sign-in.
+4. Send valid Agent messages until the configured allowance is exhausted.
+5. The next request should return stable HTTP 429 detail and must not reach the
+   Agent.
+6. In browser Developer Tools, inspect the `X-RateLimit-*` and `Retry-After`
+   response headers.
 7. Restore the desired production values and restart the backend.
 
 With Firestore enabled, the Firebase Console should show a `rateLimits`
 collection. Document IDs and `subjectHash` are one-way hashes; plaintext
 Firebase UIDs are not stored there.
+
+## Agent-side search cost guardrails
+
+The Agent also bounds each search workflow to at most 20 retained source
+postings. Session caches are capped to the same size, and normal single-property
+detail questions instruct the Agent to issue at most one detail lookup. Selected
+multi-property comparisons use the existing bounded comparison tool instead of
+unbounded repeated detail calls.
+
+These guards reduce provider and model-context amplification, but they do not
+count individual Gemini invocations or tokens.
 
 ## Important limitation
 
@@ -157,5 +163,6 @@ Before broad public access, also configure:
 - Gemini/Vertex AI project quotas and budgets;
 - RealtyAPI quotas or provider-side caps;
 - an aggregate application cost/request ceiling;
+- a separate request/cost boundary for Google Routes;
 - edge/IP/device abuse controls where appropriate;
 - monitoring and alerts for unusual request volume.

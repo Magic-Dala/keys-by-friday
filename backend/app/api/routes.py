@@ -52,25 +52,25 @@ from backend.app.services.shortlist_service import (
     get_shortlist_service,
 )
 from backend.app.services.rate_limit_service import (
-    AnonymousSearchRateLimitService,
+    AgentRequestRateLimitService,
     RateLimitStorageUnavailableError,
-    get_anonymous_search_rate_limit_service,
+    get_agent_request_rate_limit_service,
 )
 
 router = APIRouter()
 
 
-async def enforce_anonymous_agent_request_limit(
+async def enforce_agent_request_limit(
     response: Response,
     user: AuthenticatedUser,
-    service: AnonymousSearchRateLimitService,
+    service: AgentRequestRateLimitService,
 ) -> RateLimitUsage | None:
     try:
-        usage = await service.consume_if_anonymous(user)
+        usage = await service.consume(user)
     except RateLimitStorageUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Anonymous request limits are temporarily unavailable.",
+            detail="Agent request limits are temporarily unavailable.",
         ) from exc
     if usage is None:
         return None
@@ -93,6 +93,9 @@ async def enforce_anonymous_agent_request_limit(
             detail=(
                 "Anonymous search limit reached. Try again after the "
                 "current rate-limit window resets."
+                if (user.sign_in_provider or "").casefold() == "anonymous"
+                else "Signed-in Agent request limit reached. Try again after the "
+                "current rate-limit window resets."
             ),
             headers={**headers, "Retry-After": str(retry_after)},
         )
@@ -107,12 +110,12 @@ async def chat(
     request: SearchRequest,
     response: Response,
     user: AuthenticatedUser = Depends(get_current_user),
-    rate_limit_service: AnonymousSearchRateLimitService = Depends(
-        get_anonymous_search_rate_limit_service
+    rate_limit_service: AgentRequestRateLimitService = Depends(
+        get_agent_request_rate_limit_service
     ),
     service: AgentService = Depends(get_agent_service),
 ) -> SearchResponse:
-    await enforce_anonymous_agent_request_limit(
+    await enforce_agent_request_limit(
         response, user, rate_limit_service
     )
     try:
@@ -197,12 +200,12 @@ async def compare_listings(
     request: ComparisonRequest,
     response: Response,
     user: AuthenticatedUser = Depends(get_current_user),
-    rate_limit_service: AnonymousSearchRateLimitService = Depends(
-        get_anonymous_search_rate_limit_service
+    rate_limit_service: AgentRequestRateLimitService = Depends(
+        get_agent_request_rate_limit_service
     ),
     service: AgentService = Depends(get_agent_service),
 ) -> SearchResponse:
-    await enforce_anonymous_agent_request_limit(
+    await enforce_agent_request_limit(
         response, user, rate_limit_service
     )
     try:

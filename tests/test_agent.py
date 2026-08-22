@@ -30,6 +30,8 @@ def test_agent_output_contract_requires_compact_grouped_lists():
     assert '"2 bedroom", "2-bedroom", "2 bed"' in instruction
     assert "same value as both the minimum and" in instruction
     assert '"2B2B" means minimum 2 bedrooms' in instruction
+    assert "bounded to at most 20 source postings" in instruction
+    assert "call get_listing_details at most once" in instruction
 
 
 def test_mock_tool_path_works_without_external_keys(monkeypatch):
@@ -97,6 +99,43 @@ def test_search_returns_all_properties_and_keeps_top_aliases(monkeypatch):
     assert [item["representative"]["listing"]["id"] for item in result["property_groups"]] == [
         f"candidate-{index:02d}" for index in range(12)
     ]
+
+
+def test_agent_search_caps_provider_request_and_returned_postings(monkeypatch):
+    seen_limits: list[int] = []
+
+    class OversizedProvider:
+        def search(self, requirements):
+            seen_limits.append(requirements.limit)
+            return [
+                Listing(
+                    id=f"oversized-{index:02d}",
+                    address=f"{200 + index} Cost Guardrail St",
+                    city=requirements.city,
+                    state=requirements.state,
+                    zip_code=None,
+                    rent=3000 + index,
+                    bedrooms=2,
+                    bathrooms=2,
+                    source="test-source",
+                    source_url=f"https://example.test/oversized/{index}",
+                )
+                for index in range(30)
+            ]
+
+        def health(self):
+            return {"ok": True, "provider": "oversized-provider"}
+
+    monkeypatch.setattr(agent_module, "get_provider", lambda: OversizedProvider())
+
+    result = search_listings(city="Mountain View", max_rent=4000, min_bedrooms=2)
+
+    assert seen_limits == [20]
+    assert result["effective_requirements"]["limit"] == 20
+    assert result["matched_count"] == 20
+    assert result["posting_count"] == 20
+    assert len(result["property_groups"]) == 20
+
 
 
 def test_same_property_posted_on_multiple_sources_is_grouped_but_units_stay_separate(monkeypatch):

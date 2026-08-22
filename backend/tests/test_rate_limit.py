@@ -14,8 +14,8 @@ from backend.app.repositories.base import RepositoryUnavailableError
 from backend.app.repositories.memory import MemoryRateLimitRepository
 from backend.app.services.agent_service import get_agent_service
 from backend.app.services.rate_limit_service import (
-    AnonymousSearchRateLimitService,
-    get_anonymous_search_rate_limit_service,
+    AgentRequestRateLimitService,
+    get_agent_request_rate_limit_service,
 )
 
 
@@ -86,20 +86,24 @@ def _client(
             persistence_mode="memory",
             anonymous_search_rate_limit=limit,
             anonymous_search_rate_window_seconds=3600,
+            authenticated_search_rate_limit=limit,
+            authenticated_search_rate_window_seconds=3600,
         )
     )
     agent = _CountingAgent()
-    limiter = AnonymousSearchRateLimitService(
+    limiter = AgentRequestRateLimitService(
         repository or MemoryRateLimitRepository(),
-        limit=limit,
-        window_seconds=3600,
+        anonymous_limit=limit,
+        anonymous_window_seconds=3600,
+        authenticated_limit=limit,
+        authenticated_window_seconds=3600,
     )
     application.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
         uid="user-a", sign_in_provider=provider
     )
     application.dependency_overrides[get_agent_service] = lambda: agent
     application.dependency_overrides[
-        get_anonymous_search_rate_limit_service
+        get_agent_request_rate_limit_service
     ] = lambda: limiter
     return TestClient(application), agent
 
@@ -152,17 +156,18 @@ def test_chat_and_compare_share_one_anonymous_cost_bucket() -> None:
     assert agent.compare_calls == 0
 
 
-def test_non_anonymous_signed_in_user_bypasses_anonymous_limit() -> None:
-    client, agent = _client(provider="google.com", limit=1)
+def test_signed_in_user_has_a_bounded_agent_request_budget() -> None:
+    client, agent = _client(provider="google.com", limit=2)
 
     responses = [
         client.post("/api/chat", json={"message": f"Request {index}"})
         for index in range(3)
     ]
 
-    assert [response.status_code for response in responses] == [200, 200, 200]
-    assert all("X-RateLimit-Limit" not in response.headers for response in responses)
-    assert agent.chat_calls == 3
+    assert [response.status_code for response in responses] == [200, 200, 429]
+    assert responses[0].headers["X-RateLimit-Remaining"] == "1"
+    assert responses[1].headers["X-RateLimit-Remaining"] == "0"
+    assert agent.chat_calls == 2
 
 
 def test_anonymous_requests_fail_closed_when_counter_is_unavailable() -> None:
@@ -176,7 +181,7 @@ def test_anonymous_requests_fail_closed_when_counter_is_unavailable() -> None:
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": "Anonymous request limits are temporarily unavailable."
+        "detail": "Agent request limits are temporarily unavailable."
     }
     assert agent.chat_calls == 0
 
@@ -215,12 +220,12 @@ def test_rate_limit_repository_initialization_failure_returns_stable_503(
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": "Anonymous request limits are temporarily unavailable."
+        "detail": "Agent request limits are temporarily unavailable."
     }
     assert agent.chat_calls == 0
 
 
-def test_non_anonymous_user_bypasses_repository_initialization_failure(
+def test_signed_in_user_fails_closed_when_repository_initialization_fails(
     monkeypatch,
 ) -> None:
     from backend.app.services import rate_limit_service
@@ -252,8 +257,65 @@ def test_non_anonymous_user_bypasses_repository_initialization_failure(
         "/api/chat", json={"message": "Find rentals"}
     )
 
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Agent request limits are temporarily unavailable."
+    }
+    assert agent.chat_calls == 0
+
+
+def test_local_disabled_auth_still_bypasses_external_rate_limit_storage() -> None:
+    class FailingRepository:
+        async def consume(self, *args, **kwargs):
+            raise AssertionError("local disabled auth must not touch rate-limit storage")
+
+    client, agent = _client(provider="disabled", limit=1, repository=FailingRepository())
+    response = client.post("/api/chat", json={"message": "Local development"})
+
     assert response.status_code == 200
+    assert "X-RateLimit-Limit" not in response.headers
     assert agent.chat_calls == 1
+
+
+def test_production_memory_rate_limit_configuration_fails_closed() -> None:
+    class AgentMustNotRun:
+        async def send_message(self, *args, **kwargs):
+            raise AssertionError("Agent must not run without distributed rate limits")
+
+        async def compare_listings(self, *args, **kwargs):
+            raise AssertionError("Agent must not run without distributed rate limits")
+
+    application = create_app(
+        Settings(
+            agent_mode="stub",
+            app_environment="production",
+            auth_mode="firebase",
+            firebase_project_id="test-project",
+            persistence_mode="memory",
+        )
+    )
+    application.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        uid="user-a", sign_in_provider="google.com"
+    )
+    application.dependency_overrides[get_agent_service] = lambda: AgentMustNotRun()
+    client = TestClient(application)
+
+    chat = client.post("/api/chat", json={"message": "Find rentals"})
+    compare = client.post(
+        "/api/compare",
+        json={
+            "listingIds": ["listing-1", "listing-2"],
+            "conversationId": "conversation-1",
+        },
+    )
+
+    assert chat.status_code == 503
+    assert compare.status_code == 503
+    assert chat.json() == {
+        "detail": "Agent request limits are temporarily unavailable."
+    }
+    assert compare.json() == chat.json()
+
 
 
 def test_memory_limit_is_atomic_and_resets_after_the_window() -> None:

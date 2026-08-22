@@ -123,9 +123,9 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 ## Latest Verified Evidence
 
 As of the current Agent decision-intelligence, persistence, Firebase-auth, and
-anonymous rate-limit integration work:
+per-user Agent rate-limit integration work:
 
-- ✅ Full Python / Backend / Agent suite: 216 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, anonymous rate limiting, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 219 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, per-user Agent rate limiting, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12

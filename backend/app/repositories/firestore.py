@@ -457,7 +457,7 @@ class FirestoreRateLimitRepository:
 
     def _document(self, subject_id: str):
         return self._client.collection("rateLimits").document(
-            _document_id("anonymous-agent-request", subject_id)
+            _document_id("agent-request", subject_id)
         )
 
     def _consume_sync(
@@ -493,7 +493,7 @@ class FirestoreRateLimitRepository:
                         {
                             "schemaVersion": _SCHEMA_VERSION,
                             "subjectHash": _document_id(
-                                "anonymous-user", subject_id
+                                "rate-limit-subject", subject_id
                             ),
                             "windowStartedAt": window_start,
                             "requestCount": count,
@@ -513,7 +513,7 @@ class FirestoreRateLimitRepository:
             return consume(transaction)
         except Exception as exc:
             raise RepositoryUnavailableError(
-                "Firestore could not enforce the anonymous rate limit."
+                "Firestore could not enforce the Agent rate limit."
             ) from exc
 
     async def consume(

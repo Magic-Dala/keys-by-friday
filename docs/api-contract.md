@@ -83,13 +83,14 @@ return them. This is additive and does not change
 
 Validation failures return HTTP `422`. If the Agent execution path is temporarily unavailable, the backend returns HTTP `502` without exposing provider or runtime internals.
 
-Firebase anonymous users also receive `X-RateLimit-Limit`,
-`X-RateLimit-Remaining`, and `X-RateLimit-Reset` on accepted Agent-backed
-requests. `POST /api/chat` and `POST /api/compare` share one anonymous-user
-bucket. When it is exhausted, the backend returns HTTP `429` with `Retry-After`
-and does not invoke Gemini, RealtyAPI, or the Agent. Invalid HTTP `422` request
-bodies do not consume the bucket. Non-anonymous sign-in providers are outside
-this specific limit.
+Firebase users receive `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and
+`X-RateLimit-Reset` on accepted Agent-backed requests. `POST /api/chat` and
+`POST /api/compare` share one per-user bucket: anonymous users default to 10
+requests per hour and signed-in users default to 30 requests per day. When a
+bucket is exhausted, the backend returns HTTP `429` with `Retry-After` and does
+not invoke Gemini, RealtyAPI, or the Agent. Invalid HTTP `422` request bodies do
+not consume allowance. Production counter/storage failures return HTTP `503`
+before Agent execution. Local `AUTH_MODE=disabled` does not use this guard.
 
 When `AUTH_MODE=firebase`, a missing or invalid Firebase ID token returns HTTP
 `401`. A verified user attempting to reuse another user's `conversationId`

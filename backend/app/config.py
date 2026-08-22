@@ -34,6 +34,8 @@ class Settings:
     adk_session_database_url: str | None = field(default=None, repr=False)
     anonymous_search_rate_limit: int = 10
     anonymous_search_rate_window_seconds: int = 3600
+    authenticated_search_rate_limit: int = 30
+    authenticated_search_rate_window_seconds: int = 86400
 
 
 def _agent_mode(value: str) -> AgentMode:
@@ -148,5 +150,13 @@ def get_settings() -> Settings:
         anonymous_search_rate_window_seconds=_positive_integer(
             os.getenv("ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS", "3600"),
             "ANONYMOUS_SEARCH_RATE_WINDOW_SECONDS",
+        ),
+        authenticated_search_rate_limit=_positive_integer(
+            os.getenv("AUTHENTICATED_SEARCH_RATE_LIMIT", "30"),
+            "AUTHENTICATED_SEARCH_RATE_LIMIT",
+        ),
+        authenticated_search_rate_window_seconds=_positive_integer(
+            os.getenv("AUTHENTICATED_SEARCH_RATE_WINDOW_SECONDS", "86400"),
+            "AUTHENTICATED_SEARCH_RATE_WINDOW_SECONDS",
         ),
     )

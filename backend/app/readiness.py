@@ -40,6 +40,8 @@ def readiness_report(
     rate_values_valid = (
         settings.anonymous_search_rate_limit > 0
         and settings.anonymous_search_rate_window_seconds > 0
+        and settings.authenticated_search_rate_limit > 0
+        and settings.authenticated_search_rate_window_seconds > 0
     )
     rate_limit_ready = rate_values_valid and (
         not is_production or settings.persistence_mode == "firestore"
