@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { RentalSearch } from "@/components/rental-search";
-import { compareListings, getSelectedRoute, getShortlist, sendChat } from "@/lib/api";
+import { compareListings, getRecentSearches, getSelectedRoute, getShortlist, sendChat } from "@/lib/api";
 import {
   createAccountWithEmail,
   observeFirebaseUser,
@@ -11,11 +11,12 @@ import {
   signInWithGoogle,
   signOutToAnonymous,
 } from "@/lib/firebase-auth";
-import type { CanonicalListing, SearchResponse } from "@/types/search";
+import type { CanonicalListing, RecentSearch, SearchResponse } from "@/types/search";
 
 const { loadGoogleMapsMock } = vi.hoisted(() => ({ loadGoogleMapsMock: vi.fn() }));
 
 vi.mock("@/lib/api", () => ({
+  getRecentSearches: vi.fn(),
   compareListings: vi.fn(),
   getSelectedRoute: vi.fn(),
   getShortlist: vi.fn(),
@@ -101,6 +102,8 @@ const searchResponse: SearchResponse = {
 
 beforeEach(() => {
   window.localStorage.clear();
+  vi.mocked(getRecentSearches).mockReset();
+  vi.mocked(getRecentSearches).mockResolvedValue({ items: [] });
   vi.mocked(getSelectedRoute).mockReset();
   vi.mocked(compareListings).mockReset();
   vi.mocked(getShortlist).mockReset();
@@ -126,6 +129,157 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "");
 });
 
+function recentSearch(overrides: Partial<RecentSearch> = {}): RecentSearch {
+  return {
+    conversationId: "historical-conversation",
+    createdAt: "2026-08-20T18:00:00Z",
+    updatedAt: "2026-08-20T18:15:00Z",
+    turnCount: 4,
+    listings: [
+      {
+        id: "historical-listing",
+        title: "Saved Heatherstone",
+        address: "877 Heatherstone Way",
+        priceMin: 3450,
+        priceMax: 3950,
+        latitude: 37.4,
+        longitude: -122.1,
+        commute: {
+          destination: "Google",
+          mode: "DRIVE",
+          durationMinutes: 18,
+          status: "available",
+        },
+      },
+    ],
+    lastCommuteStatus: "available",
+    ...overrides,
+  };
+}
+
+it("does not show another account's Recent Searches to an anonymous user", () => {
+  render(<RentalSearch />);
+
+  expect(screen.queryByRole("heading", { name: "Recent Searches" })).not.toBeInTheDocument();
+  expect(getRecentSearches).not.toHaveBeenCalled();
+});
+
+it("shows authenticated Recent Searches in the order returned by the backend", async () => {
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    listener({
+      uid: "email-2",
+      isAnonymous: false,
+      displayName: "Ada Lovelace",
+      email: "ada@example.com",
+    } as never);
+    return vi.fn();
+  });
+  vi.mocked(getRecentSearches).mockResolvedValue({
+    items: [
+      recentSearch({ conversationId: "newest", updatedAt: "2026-08-20T18:15:00Z" }),
+      recentSearch({ conversationId: "older", updatedAt: "2026-08-19T18:15:00Z" }),
+    ],
+  });
+
+  render(<RentalSearch />);
+
+  const panel = await screen.findByRole("region", { name: "Recent Searches" });
+  await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(1));
+  expect(getRecentSearches).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+  const panelText = panel.textContent ?? "";
+  expect(panelText.indexOf("Updated Aug 20")).toBeLessThan(panelText.indexOf("Updated Aug 19"));
+  expect(within(panel).getAllByRole("heading", { name: "Rental search" })).toHaveLength(2);
+});
+
+it("clears the previous account's Recent Searches when Firebase UID changes", async () => {
+  let notifyAuthChange: ((user: unknown) => void) | undefined;
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    notifyAuthChange = listener as (user: unknown) => void;
+    listener({ uid: "email-1", isAnonymous: false, displayName: "Ada", email: "ada@example.com" } as never);
+    return vi.fn();
+  });
+  vi.mocked(getRecentSearches)
+    .mockResolvedValueOnce({ items: [recentSearch({ conversationId: "old-account" })] })
+    .mockImplementationOnce(() => new Promise(() => undefined));
+
+  render(<RentalSearch />);
+  expect(await screen.findByText("Updated Aug 20 · 4 turns")).toBeVisible();
+
+  await act(async () => {
+    notifyAuthChange?.({ uid: "email-2", isAnonymous: false, displayName: "Grace", email: "grace@example.com" });
+  });
+
+  await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("Updated Aug 20 · 4 turns")).not.toBeInTheDocument();
+});
+
+it("restores saved listings without fabricating transcript turns and continues with its conversation ID", async () => {
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    listener({ uid: "email-2", isAnonymous: false, displayName: "Ada", email: "ada@example.com" } as never);
+    return vi.fn();
+  });
+  vi.mocked(getRecentSearches).mockResolvedValue({ items: [recentSearch()] });
+  vi.mocked(sendChat).mockResolvedValue(searchResponse);
+
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+  const panel = await screen.findByRole("region", { name: "Recent Searches" });
+
+  await user.click(within(panel).getByRole("button", { name: "View Results" }));
+
+  expect(await screen.findByText("The strongest matches")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Saved Heatherstone" })).toBeVisible();
+  expect(screen.getByText("Showing the latest saved results from Aug 20.")).toBeVisible();
+  expect(screen.getByText("Verify").closest("li")).toHaveClass("isCurrent");
+  expect(screen.queryByText("I found one strong match.")).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("Refine your request"), "Add parking");
+  await user.click(screen.getByRole("button", { name: "Refine search" }));
+
+  await waitFor(() => expect(sendChat).toHaveBeenCalledWith(
+    { message: "Add parking", conversationId: "historical-conversation" },
+    { signal: expect.any(AbortSignal) },
+  ));
+});
+
+it("focuses the composer and indicates continuation from Continue Search", async () => {
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    listener({ uid: "email-2", isAnonymous: false, displayName: "Ada", email: "ada@example.com" } as never);
+    return vi.fn();
+  });
+  vi.mocked(getRecentSearches).mockResolvedValue({ items: [recentSearch()] });
+  vi.mocked(sendChat).mockResolvedValue(searchResponse);
+
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+  const panel = await screen.findByRole("region", { name: "Recent Searches" });
+
+  await user.click(within(panel).getByRole("button", { name: "Continue Search" }));
+
+  await waitFor(() => expect(screen.getByLabelText("Refine your request")).toHaveFocus());
+  expect(screen.getByText("Continuing your search from Aug 20.")).toBeVisible();
+});
+
+it("does not turn a successful chat result into an error when history refresh fails", async () => {
+  vi.mocked(observeFirebaseUser).mockImplementation((listener) => {
+    listener({ uid: "email-2", isAnonymous: false, displayName: "Ada", email: "ada@example.com" } as never);
+    return vi.fn();
+  });
+  vi.mocked(getRecentSearches)
+    .mockResolvedValueOnce({ items: [] })
+    .mockRejectedValueOnce(new Error("Recent searches are unavailable."));
+  vi.mocked(sendChat).mockResolvedValue(searchResponse);
+
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("Describe your ideal rental"), "Find one home");
+  await user.click(screen.getByRole("button", { name: "Ask rental agent" }));
+
+  expect(await screen.findByRole("heading", { name: "Heatherstone" })).toBeVisible();
+  await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(2));
+  expect(screen.queryByText("The search could not be completed.")).not.toBeInTheDocument();
+  expect(screen.getByText("Recent searches are unavailable.")).toBeVisible();
+});
 it("opens one sign-in dialog that contains Google and email options", async () => {
   render(<RentalSearch />);
   const user = userEvent.setup();

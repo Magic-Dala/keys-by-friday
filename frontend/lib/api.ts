@@ -8,6 +8,8 @@ import type {
   CommuteEvaluation,
   Listing,
   RouteDetail,
+  RecentSearch,
+  RecentSearchResponse,
   SelectedRouteRequest,
   SearchRequest,
   SearchResponse,
@@ -19,6 +21,7 @@ import type {
 const backendUrl = (
   process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
 ).replace(/\/+$/, "");
+const RECENT_SEARCHES_TIMEOUT_MS = 10_000;
 
 export class ApiError extends Error {
   constructor(
@@ -293,6 +296,52 @@ function parseCanonicalComparison(value: unknown): CanonicalComparison {
   };
 }
 
+function parseRecentSearch(value: unknown): RecentSearch {
+  if (
+    !isRecord(value) ||
+    typeof value.conversationId !== "string" ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string" ||
+    typeof value.turnCount !== "number" ||
+    !Number.isFinite(value.turnCount) ||
+    !Array.isArray(value.listings)
+  ) {
+    throw new ApiError("Invalid recent search in API response.");
+  }
+
+  const lastCommuteStatus = optionalString(
+    value.lastCommuteStatus,
+    "recent search commute status",
+  );
+  if (
+    lastCommuteStatus !== undefined &&
+    lastCommuteStatus !== "not_requested" &&
+    lastCommuteStatus !== "requires_input" &&
+    lastCommuteStatus !== "available" &&
+    lastCommuteStatus !== "partial" &&
+    lastCommuteStatus !== "unavailable" &&
+    lastCommuteStatus !== "unknown"
+  ) {
+    throw new ApiError("Invalid recent search commute status in API response.");
+  }
+
+  return {
+    conversationId: value.conversationId,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    turnCount: value.turnCount,
+    listings: value.listings.map(parseListing),
+    lastCommuteStatus: lastCommuteStatus as RecentSearch["lastCommuteStatus"],
+  };
+}
+
+function parseRecentSearchResponse(value: unknown): RecentSearchResponse {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    throw new ApiError("Invalid recent searches response.");
+  }
+  return { items: value.items.map(parseRecentSearch) };
+}
+
 function parseSearchResponse(value: unknown): SearchResponse {
   if (!isRecord(value)) throw new ApiError("Invalid API response.");
   if (typeof value.conversationId !== "string" || typeof value.message !== "string") {
@@ -491,6 +540,70 @@ export async function getShortlist(
   }
   if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
   return parseShortlistResponse(await response.json());
+}
+
+export async function getRecentSearches(
+  options: { signal?: AbortSignal } = {},
+): Promise<RecentSearchResponse> {
+  const requestController = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let rejectCancellation: (reason: unknown) => void = () => undefined;
+  const abortError = () => {
+    const error = new Error("The request was aborted");
+    error.name = "AbortError";
+    return error;
+  };
+  const cancellation = new Promise<never>((_, reject) => {
+    rejectCancellation = reject;
+    timeoutId = setTimeout(() => {
+      reject(new ApiError("Recent searches request timed out. Try again."));
+      requestController.abort();
+    }, RECENT_SEARCHES_TIMEOUT_MS);
+  });
+  const abortFromCaller = () => {
+    rejectCancellation(abortError());
+    requestController.abort();
+  };
+  if (options.signal) {
+    if (options.signal.aborted) abortFromCaller();
+    else options.signal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  const operation = (async () => {
+    if (requestController.signal.aborted) throw abortError();
+    const headers = await authenticatedHeaders();
+    if (requestController.signal.aborted) throw abortError();
+
+    let response: Response;
+    try {
+      response = await fetch(`${backendUrl}/api/conversations?limit=20`, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+        signal: requestController.signal,
+      });
+    } catch (caught) {
+      if (caught instanceof Error && caught.name === "AbortError") throw caught;
+      throw new ApiError("Can’t reach recent searches. Check that the backend is running.");
+    }
+    if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (caught) {
+      if (caught instanceof Error && caught.name === "AbortError") throw caught;
+      throw new ApiError("Backend returned invalid recent searches JSON.");
+    }
+    return parseRecentSearchResponse(payload);
+  })();
+
+  try {
+    return await Promise.race([cancellation, operation]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    options.signal?.removeEventListener("abort", abortFromCaller);
+  }
 }
 
 export async function saveShortlistItem(

@@ -184,6 +184,19 @@ export interface SearchResponse {
   mode: AgentMode;
 }
 
+export interface RecentSearch {
+  conversationId: string;
+  createdAt: string;
+  updatedAt: string;
+  turnCount: number;
+  listings: Listing[];
+  lastCommuteStatus?: CommuteEvaluation["status"];
+}
+
+export interface RecentSearchResponse {
+  items: RecentSearch[];
+}
+
 export interface ShortlistItem {
   listing: Listing;
   sourceConversationId: string;
