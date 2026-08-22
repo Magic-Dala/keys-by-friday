@@ -44,8 +44,10 @@ uploads/
 # IDE and OS
 .idea/
 .vscode/
+.worktrees/
 .DS_Store
 Thumbs.db
 
 # ADK local runtime state
 .adk/
+.local/

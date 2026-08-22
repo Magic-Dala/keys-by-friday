@@ -2,6 +2,12 @@
 
 AI rental search built with **Next.js + FastAPI + Google ADK**.
 
+Production uses Firestore for product data and an official persistent ADK
+database session service for restart-safe conversational state. See
+`docs/firestore.md`, `docs/adk-sessions.md`, and
+`docs/comparison-shortlist.md`. Public deployment cost protection is explained
+in `docs/rate-limits.md`.
+
 If you just want to run the project, start here.
 
 ## Quick Start
@@ -65,6 +71,7 @@ Useful local URLs:
 | Product UI | http://localhost:3000 |
 | API docs | http://localhost:8000/docs |
 | Backend health | http://localhost:8000/health |
+| Backend readiness | http://localhost:8000/ready |
 | ADK Web | http://localhost:8765 |
 
 Press `Ctrl+C` once to stop the frontend and backend.
@@ -131,10 +138,8 @@ Next.js Frontend :3000
 FastAPI Backend :8000
   ↓
 AgentService
-  ↓
-Google ADK Rental Agent
-  ↓
-Rental Provider
+  ├→ Google ADK Rental Agent → Rental Provider
+  └→ ADK SessionService → memory locally / PostgreSQL in production
 ```
 
 The frontend talks only to the FastAPI API. The backend owns the ADK adapter. Rental search, ranking, verification, and provider logic stay in `rental_agent/**`.
@@ -179,6 +184,13 @@ GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 | `docs/architecture.md` | Stable system boundaries |
 | `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
 | `docs/development.md` | Manual service commands and contributor workflow |
+| `docs/deployment.md` | macOS, Docker, and Cloud Run backend deployment |
+| `docs/authentication.md` | Firebase identity setup and Milestone 2 tests |
+| `docs/maps.md` | Google Routes / commute setup and testing |
+| `docs/firestore.md` | Firestore repositories, shortlist persistence, and Milestone 3 tests |
+| `docs/adk-sessions.md` | Persistent ADK sessions, restart test, concurrency, and Milestone 4 setup |
+| `docs/comparison-shortlist.md` | Canonical listings, comparison, shortlist CRUD, and Milestone 5 tests |
+| `docs/rate-limits.md` | Anonymous Firebase rate limiting, Firestore counters, and cost boundaries |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
 | `docs/status.md` | **Living:** current implementation status |
 | `docs/roadmap.md` | **Living:** priorities and next work |
