@@ -1,7 +1,11 @@
 import httpx
 
 from rental_agent.models import SearchRequirements
-from rental_agent.providers.realtyapi import REALTYAPI_BASE_URL, RealtyApiProvider
+from rental_agent.providers.realtyapi import (
+    REALTYAPI_BASE_URL,
+    RealtyApiProvider,
+    normalize_realtyapi_listing,
+)
 
 
 def test_realtyapi_search_request_construction_auth_and_live_shape_normalization():
@@ -36,6 +40,7 @@ def test_realtyapi_search_request_construction_auth_and_live_shape_normalization
                         "priceRange": "$2,750 - 3,650",
                         "bedRange": "1 - 2 Beds",
                         "propertyType": "Apartment",
+                        "listingStatus": "For_Rent",
                         "availabilityText": "Available Now",
                         "amenityNames": ["Parking", "Gym"],
                     }
@@ -79,7 +84,10 @@ def test_realtyapi_search_request_construction_auth_and_live_shape_normalization
     assert results[0].city == "Mountain View"
     assert results[0].rent == 3650
     assert results[0].bedrooms == 2
-    assert results[0].bathrooms == 2
+    assert results[0].bathrooms is None
+    assert results[0].bathrooms_min_evidence == 2
+    assert results[0].status == "active"
+    assert "bathrooms_min_evidence" in results[0].query_backed_fields
     assert results[0].pets_allowed is True
     assert results[0].parking_available is True
     assert results[0].source_url == (
@@ -161,6 +169,25 @@ def test_explicit_apartments_url_is_preserved():
     result = provider.search(SearchRequirements(city="Mountain View", state="CA"))[0]
 
     assert result.source_url == "https://www.apartments.com/example/abc123/"
+
+
+def test_dict_bed_range_preserves_zero_lower_bound():
+    listing = normalize_realtyapi_listing(
+        {
+            "listingKey": "studio-range",
+            "oneLineAddress": "1 Main St, Mountain View, CA 94040",
+            "address": {
+                "city": "Mountain View",
+                "state": "CA",
+                "postalCode": "94040",
+            },
+            "bedRange": {"min": 0, "max": 2},
+        }
+    )
+
+    assert listing.bedrooms == 2
+    assert listing.bedrooms_min == 0
+    assert listing.bedrooms_max == 2
 
 
 def test_non_integer_bath_constraint_stays_deterministic_locally():

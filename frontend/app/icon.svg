@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Keys by Friday house monogram</title>
+  <rect width="48" height="48" rx="15" fill="#C13F35"/>
+  <path
+    d="M7.75 22.25 24 7.9l16.25 14.35v16.5a2 2 0 0 1-2 2H9.75a2 2 0 0 1-2-2v-16.5Z"
+    fill="#fff"
+    stroke="#fff"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <g fill="none" stroke="#C13F35" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13.5 20v15.5"/>
+    <path d="m21.5 20-7 7.75 7 7.75"/>
+    <path d="M27.5 35.5V20H35"/>
+    <path d="M27.5 27.25h6"/>
+  </g>
+</svg>

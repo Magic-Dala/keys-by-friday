@@ -87,6 +87,11 @@ uv sync --frozen --extra dev --extra backend
 uv run --extra backend uvicorn backend.app.main:app --reload --port 8000
 ```
 
+`uv` reads `.python-version` and uses Python 3.12, matching the backend Docker
+image. Normal local work uses `ADK_SESSION_MODE=memory`. Use the temporary
+SQLite configuration in `docs/adk-sessions.md` only when testing a backend
+restart with the same conversation.
+
 Frontend:
 
 ```powershell

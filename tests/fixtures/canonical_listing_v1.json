@@ -1,0 +1,157 @@
+{
+  "schemaVersion": "kbf.canonical-listing.v1",
+  "identity": {
+    "id": "example-001",
+    "sourceListingId": "provider-example-001",
+    "propertyName": "Example Apartments"
+  },
+  "location": {
+    "address": "123 Example St, Mountain View, CA 94040",
+    "city": "Mountain View",
+    "state": "CA",
+    "zipCode": "94040",
+    "countryCode": "US",
+    "latitude": 37.4001,
+    "longitude": -122.1001
+  },
+  "pricing": {
+    "rent": null,
+    "rentMin": 3200.0,
+    "rentMax": 3800.0
+  },
+  "property": {
+    "bedrooms": null,
+    "bedroomsMin": 2.0,
+    "bedroomsMax": 3.0,
+    "bathrooms": null,
+    "bathroomsMinEvidence": 2.0,
+    "propertyType": "Apartment",
+    "squareFootage": null,
+    "yearBuilt": null,
+    "isMultifamily": true,
+    "rating": 4.2,
+    "description": null
+  },
+  "availability": {
+    "status": null,
+    "availabilityText": "Available Now",
+    "hasAvailability": true,
+    "listedAt": null,
+    "lastSeenAt": null,
+    "daysOnMarket": null
+  },
+  "policies": {
+    "petsAllowed": true,
+    "petPolicy": null,
+    "parkingAvailable": true,
+    "parkingPolicy": null
+  },
+  "features": {
+    "amenities": ["Parking", "Gym", "Washer Dryer"],
+    "specialties": ["Short Term"],
+    "rentDealsCount": 1
+  },
+  "media": {
+    "primaryImageUrl": "https://example.test/images/example-001.jpg",
+    "multimediaUrl": null,
+    "virtualTourUrl": null,
+    "attachmentCount": 12
+  },
+  "contact": {
+    "phone": "(650) 555-0100",
+    "propertyManagerName": "Example Residential",
+    "propertyManagerCompanyId": "example-company-1",
+    "hasLeadEmail": true
+  },
+  "source": {
+    "provider": "realtyapi-apartments",
+    "url": "https://example.test/listings/example-001"
+  },
+  "evidence": {
+    "detailVerified": false,
+    "queryBackedFields": [
+      "property.bathroomsMinEvidence",
+      "policies.petsAllowed",
+      "policies.parkingAvailable"
+    ],
+    "criticalQueryBackedFields": [
+      "property.bathroomsMinEvidence",
+      "policies.petsAllowed",
+      "policies.parkingAvailable"
+    ]
+  },
+  "completeness": {
+    "knownFields": [
+      "identity.id",
+      "identity.sourceListingId",
+      "identity.propertyName",
+      "location.address",
+      "location.city",
+      "location.state",
+      "location.zipCode",
+      "location.countryCode",
+      "location.latitude",
+      "location.longitude",
+      "pricing.rentMin",
+      "pricing.rentMax",
+      "property.bedroomsMin",
+      "property.bedroomsMax",
+      "property.bathroomsMinEvidence",
+      "property.propertyType",
+      "property.isMultifamily",
+      "property.rating",
+      "availability.availabilityText",
+      "availability.hasAvailability",
+      "policies.petsAllowed",
+      "policies.parkingAvailable",
+      "features.amenities",
+      "features.specialties",
+      "features.rentDealsCount",
+      "media.primaryImageUrl",
+      "media.attachmentCount",
+      "contact.phone",
+      "contact.propertyManagerName",
+      "contact.propertyManagerCompanyId",
+      "contact.hasLeadEmail",
+      "source.provider",
+      "source.url"
+    ],
+    "unknownFields": [
+      "pricing.rent",
+      "property.bedrooms",
+      "property.bathrooms",
+      "property.squareFootage",
+      "property.yearBuilt",
+      "property.description",
+      "availability.status",
+      "availability.listedAt",
+      "availability.lastSeenAt",
+      "availability.daysOnMarket",
+      "policies.petPolicy",
+      "policies.parkingPolicy",
+      "media.multimediaUrl",
+      "media.virtualTourUrl"
+    ],
+    "knownCount": 33,
+    "totalCount": 47,
+    "ratio": 0.702,
+    "criticalUnknownFields": [],
+    "sectionCoverage": {
+      "identity": {"known": 3, "total": 3, "ratio": 1.0},
+      "location": {"known": 7, "total": 7, "ratio": 1.0},
+      "pricing": {"known": 2, "total": 3, "ratio": 0.667},
+      "property": {"known": 6, "total": 11, "ratio": 0.545},
+      "availability": {"known": 2, "total": 6, "ratio": 0.333},
+      "policies": {"known": 2, "total": 4, "ratio": 0.5},
+      "features": {"known": 3, "total": 3, "ratio": 1.0},
+      "media": {"known": 2, "total": 4, "ratio": 0.5},
+      "contact": {"known": 4, "total": 4, "ratio": 1.0},
+      "source": {"known": 2, "total": 2, "ratio": 1.0}
+    },
+    "mapReady": true,
+    "cardReady": true,
+    "comparisonReady": true,
+    "decisionReady": false,
+    "verificationRequired": true
+  }
+}
