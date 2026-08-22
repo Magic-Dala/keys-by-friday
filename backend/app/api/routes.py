@@ -1,3 +1,5 @@
+import math
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import (
@@ -26,6 +28,7 @@ from backend.app.models.search import (
 from backend.app.repositories.base import (
     DEFAULT_CONVERSATION_LIST_LIMIT,
     MAX_CONVERSATION_LIST_LIMIT,
+    RateLimitUsage,
 )
 from backend.app.services.agent_service import (
     AgentService,
@@ -48,16 +51,73 @@ from backend.app.services.shortlist_service import (
     ShortlistService,
     get_shortlist_service,
 )
+from backend.app.services.rate_limit_service import (
+    AgentRequestRateLimitService,
+    RateLimitStorageUnavailableError,
+    get_agent_request_rate_limit_service,
+)
 
 router = APIRouter()
+
+
+async def enforce_agent_request_limit(
+    response: Response,
+    user: AuthenticatedUser,
+    service: AgentRequestRateLimitService,
+) -> RateLimitUsage | None:
+    try:
+        usage = await service.consume(user)
+    except RateLimitStorageUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent request limits are temporarily unavailable.",
+        ) from exc
+    if usage is None:
+        return None
+
+    reset_epoch = str(int(usage.reset_at.timestamp()))
+    headers = {
+        "X-RateLimit-Limit": str(usage.limit),
+        "X-RateLimit-Remaining": str(usage.remaining),
+        "X-RateLimit-Reset": reset_epoch,
+    }
+    if not usage.allowed:
+        retry_after = max(
+            math.ceil(
+                (usage.reset_at - datetime.now(timezone.utc)).total_seconds()
+            ),
+            1,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Anonymous search limit reached. Try again after the "
+                "current rate-limit window resets."
+                if (user.sign_in_provider or "").casefold() == "anonymous"
+                else "Signed-in Agent request limit reached. Try again after the "
+                "current rate-limit window resets."
+            ),
+            headers={**headers, "Retry-After": str(retry_after)},
+        )
+
+    for name, value in headers.items():
+        response.headers[name] = value
+    return usage
 
 
 @router.post("/chat", response_model=SearchResponse, tags=["chat"])
 async def chat(
     request: SearchRequest,
+    response: Response,
     user: AuthenticatedUser = Depends(get_current_user),
+    rate_limit_service: AgentRequestRateLimitService = Depends(
+        get_agent_request_rate_limit_service
+    ),
     service: AgentService = Depends(get_agent_service),
 ) -> SearchResponse:
+    await enforce_agent_request_limit(
+        response, user, rate_limit_service
+    )
     try:
         return await service.send_message(
             request.message,
@@ -138,9 +198,16 @@ async def list_conversations(
 @router.post("/compare", response_model=SearchResponse, tags=["comparison"])
 async def compare_listings(
     request: ComparisonRequest,
+    response: Response,
     user: AuthenticatedUser = Depends(get_current_user),
+    rate_limit_service: AgentRequestRateLimitService = Depends(
+        get_agent_request_rate_limit_service
+    ),
     service: AgentService = Depends(get_agent_service),
 ) -> SearchResponse:
+    await enforce_agent_request_limit(
+        response, user, rate_limit_service
+    )
     try:
         return await service.compare_listings(
             request.listingIds,

@@ -110,6 +110,15 @@ users/{hashed-firebase-uid}/shortlist/{hashed-listing-id}
   note
   savedAt
   updatedAt
+
+rateLimits/{hashed-anonymous-uid}
+  schemaVersion
+  subjectHash
+  windowStartedAt
+  requestCount
+  resetAt
+  expiresAt
+  updatedAt
 ```
 
 External IDs are SHA-256 hashed before being used as Firestore document names.
@@ -119,6 +128,11 @@ Firestore document path.
 
 The Firebase UID is not stored in plaintext in these document paths. A one-way
 hash separates each user's shortlist.
+
+The rate-limit document is updated in a Firestore transaction, so separate
+Cloud Run instances cannot independently spend the same user's allowance. The
+`expiresAt` field can use a Firestore TTL policy for cleanup. No composite index
+is required.
 
 ## Maps behavior
 

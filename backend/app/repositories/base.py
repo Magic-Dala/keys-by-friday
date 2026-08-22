@@ -35,6 +35,14 @@ class ShortlistItemNotFoundError(RepositoryError):
 
 
 @dataclass(frozen=True, slots=True)
+class RateLimitUsage:
+    allowed: bool
+    limit: int
+    remaining: int
+    reset_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationMetadata:
     conversation_id: str
     user_id: str
@@ -101,3 +109,14 @@ class ShortlistRepository(Protocol):
     ) -> ShortlistItem: ...
 
     async def remove(self, user_id: str, listing_id: str) -> None: ...
+
+
+class RateLimitRepository(Protocol):
+    async def consume(
+        self,
+        subject_id: str,
+        *,
+        limit: int,
+        window_seconds: int,
+        now: datetime,
+    ) -> RateLimitUsage: ...

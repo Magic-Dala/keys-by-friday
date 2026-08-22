@@ -107,6 +107,8 @@ Next.js Frontend
 - ✅ Explicit comparison unknowns remain unknown instead of becoming guessed facts
 - ✅ Comparison responses refresh selected canonical listing snapshots without dropping unselected persisted results
 - ✅ Complete shortlist CRUD with authenticated note updates
+- ✅ Distributed Firestore rate limit for anonymous `/api/chat` and `/api/compare`
+- ✅ HTTP 429, `Retry-After`, and browser-visible rate-limit response headers
 
 ## In Progress / Next Product Work
 
@@ -114,27 +116,28 @@ Next.js Frontend
 - 🔄 Expose Agent activity metadata through a backend/frontend progress transport
 - 🔄 Run a live Google Routes smoke test with a restricted Maps key
 - 🔄 Present structured commute/map evidence in the product frontend
-- 🔄 Keep Cloud Run private until the hosted browser path has distributed rate limits, aggregate cost caps, and abuse monitoring
+- 🔄 Keep Cloud Run private until the hosted browser path also has aggregate cost caps and abuse monitoring
 
 The web vertical slice now returns both the Agent's readable `message` and structured `listings[]` from the same ADK execution.
 
 ## Latest Verified Evidence
 
-As of the current Agent decision-intelligence, persistence, and Firebase-auth integration work:
+As of the current Agent decision-intelligence, persistence, Firebase-auth, and
+per-user Agent rate-limit integration work:
 
-- ✅ Full Python / Backend / Agent suite: 207 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 219 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, per-user Agent rate limiting, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
 - ✅ Local process and Docker smoke tests passed for `/health`, `/ready`, and `/api/chat`
 - ✅ Request IDs were returned in HTTP headers and correlated with structured JSON logs
 - ✅ Next.js production build passed
-- ✅ Frontend suite: 7 files / 51 tests passed, including Firebase auth and the structured comparison interaction
+- ✅ Frontend suite: 10 files / 78 tests passed, including Firebase auth, Recent Searches, and the structured comparison interaction
 - ✅ TypeScript typecheck passed
 - ✅ Frontend page rendered locally
 - ✅ Backend health endpoint responded successfully
 - ✅ Real `/api/chat` request reached Google ADK and returned real Mountain View rental matches
-- ✅ Real `/api/chat` response returned 4 structured listings with normalized price / beds / baths / source URL / reason
+- ✅ Live August 20, 2026 `/api/chat` smoke test used `gemini-3.7-flash`; RealtyAPI successfully searched Apartments.com, Zillow, and Realtor with no failed source and returned 5 structured listings
 - ✅ Real follow-up request reused the same `conversationId` and preserved the ADK session
 - ✅ Empty requests return 422 and Agent-layer failures are mapped to a stable 502 response
 - ✅ Frontend TypeScript typecheck passed after listing-card integration
