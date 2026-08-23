@@ -11,8 +11,8 @@ from google.adk.models.llm_response import LlmResponse
 logger = logging.getLogger(__name__)
 
 AGENT_ROUTINE_MODEL_ORDER: tuple[str, ...] = (
-    "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
 )
 AGENT_REASONING_MODEL = "gemini-3.7-flash"
 
