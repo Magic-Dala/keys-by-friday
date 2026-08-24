@@ -1811,6 +1811,8 @@ def _comparison_candidate(
     decision_unknowns = list(comparison_unknowns)
     rank_value = candidate.get("current_search_rank")
     current_rank = int(rank_value) if isinstance(rank_value, (int, float)) else None
+    score_value = candidate.get("score")
+    current_score = float(score_value) if isinstance(score_value, (int, float)) else None
     pricing = canonical["pricing"]
     property_data = canonical["property"]
     policies = canonical["policies"]
@@ -1843,6 +1845,7 @@ def _comparison_candidate(
     return {
         "listing_id": listing.id,
         "current_search_rank": current_rank,
+        "score": current_score,
         "address": listing.address,
         "source": listing.source,
         "price": pricing["rent"],
@@ -2057,6 +2060,21 @@ def compare_candidates(
         req,
         commutes=canonical_commutes,
     )
+    comparison_by_id = {
+        str(item["listing_id"]): item
+        for item in comparisons
+        if item.get("listing_id") is not None
+    }
+    canonical_results = canonical_comparison.get("results")
+    if isinstance(canonical_results, list):
+        for result in canonical_results:
+            if not isinstance(result, dict):
+                continue
+            comparison = comparison_by_id.get(str(result.get("listingId")))
+            if comparison is None:
+                continue
+            result["rank"] = comparison.get("current_search_rank")
+            result["score"] = comparison.get("score")
 
     return {
         **canonical_comparison,
