@@ -708,6 +708,58 @@ def test_comparison_prompt_keeps_listing_ids_out_of_user_facing_copy() -> None:
     )
     assert response.comparison is not None
     assert response.comparison.listingIds == ["74pt6lx", "v0c38pe"]
+    assert response.message.endswith(
+        "## Decision\nDecision pending. Structured comparison facts are unavailable."
+    )
+
+
+def test_comparison_synthesizes_final_decision_from_structured_facts() -> None:
+    service = AgentService(mode="stub")
+
+    async def fake_send_message(
+        message: str,
+        conversation_id: str | None = None,
+        *,
+        user_id: str,
+    ) -> SearchResponse:
+        return SearchResponse(
+            conversationId=conversation_id or "conversation-1",
+            message="Gemini comparison without the required final section.",
+            comparison={
+                "schemaVersion": "kbf.canonical-comparison.v1",
+                "listingIds": ["weak", "strong"],
+                "results": [
+                    {
+                        "listingId": "weak",
+                        "hardConstraintStatus": "pass",
+                        "decisionReady": True,
+                        "rank": 2,
+                        "score": 71.0,
+                    },
+                    {
+                        "listingId": "strong",
+                        "hardConstraintStatus": "pass",
+                        "decisionReady": True,
+                        "rank": 1,
+                        "score": 92.5,
+                    },
+                ],
+            },
+            mode="stub",
+        )
+
+    service.send_message = fake_send_message  # type: ignore[method-assign]
+    response = asyncio.run(
+        service.compare_listings(
+            ["weak", "strong"],
+            "conversation-1",
+            user_id="user-1",
+        )
+    )
+
+    assert response.message.endswith(
+        "## Decision\nOption 2 is the strongest decision-ready choice based on the confirmed comparison evidence."
+    )
 
 
 @pytest.mark.parametrize(

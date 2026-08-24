@@ -253,6 +253,95 @@ def _canonical_comparison_from_tool_payload(
     )
 
 
+_DECISION_FIELD_LABELS = {
+    "property.bathrooms": "bathroom count",
+    "property.bathroomsMinEvidence": "exact bathroom count",
+    "policies.petsAllowed": "pet policy",
+    "policies.parkingAvailable": "parking availability",
+    "availability.moveInDate": "move-in date",
+    "media.primaryImageUrl": "listing photo",
+}
+
+
+def _decision_field_label(path: str) -> str:
+    if path in _DECISION_FIELD_LABELS:
+        return _DECISION_FIELD_LABELS[path]
+    field_name = path.rsplit(".", 1)[-1]
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", field_name).replace("_", " ").replace("-", " ").lower()
+
+
+def _comparison_decision_section(comparison: CanonicalComparisonResponse) -> str:
+    results = comparison.results
+    if not results:
+        return "## Decision\nDecision pending. Structured comparison facts are unavailable."
+
+    unresolved = [
+        result
+        for result in results
+        if result.hardConstraintStatus != "fail" and not result.decisionReady
+    ]
+    if unresolved:
+        unknowns = list(
+            dict.fromkeys(
+                field
+                for result in unresolved
+                for field in result.decisionUnknowns
+            )
+        )
+        if unknowns:
+            labels = ", ".join(_decision_field_label(field) for field in unknowns)
+            return (
+                "## Decision\nDecision pending. Verify "
+                f"{labels} before making a final recommendation."
+            )
+        return "## Decision\nDecision pending. More evidence is required before making a final recommendation."
+
+    ready = [
+        result
+        for result in results
+        if result.hardConstraintStatus == "pass" and result.decisionReady
+    ]
+    if not ready:
+        return "## Decision\nNone of these options satisfies the confirmed hard requirements."
+
+    if len(ready) > 1 and any(
+        result.rank is None and result.score is None for result in ready
+    ):
+        return (
+            "## Decision\nThe decision-ready options cannot be ranked reliably because "
+            "ranking metadata is unavailable."
+        )
+
+    best = min(
+        ready,
+        key=lambda result: (
+            result.rank if result.rank is not None else math.inf,
+            -(result.score if result.score is not None else -math.inf),
+        ),
+    )
+    try:
+        option_number = comparison.listingIds.index(best.listingId) + 1
+    except ValueError:
+        option_number = None
+    option_label = f"Option {option_number}" if option_number is not None else "The top option"
+    return (
+        "## Decision\n"
+        f"{option_label} is the strongest decision-ready choice based on the confirmed comparison evidence."
+    )
+
+
+def _ensure_comparison_decision(
+    message: str,
+    comparison: CanonicalComparisonResponse,
+) -> str:
+    normalized = message.strip()
+    decision_heading = re.search(r"(?m)^## Decision\s*$", normalized)
+    if decision_heading is not None:
+        normalized = normalized[: decision_heading.start()].rstrip()
+    section = _comparison_decision_section(comparison)
+    return f"{normalized}\n\n{section}" if normalized else section
+
+
 def _canonical_section(
     listing: dict[str, Any], section: str
 ) -> dict[str, Any]:
@@ -1051,6 +1140,10 @@ class AgentService:
             raise AgentServiceError(
                 "ADK agent returned a different listing selection"
             )
+        response.message = _ensure_comparison_decision(
+            response.message,
+            response.comparison,
+        )
         return response
 
     async def get_selected_route(

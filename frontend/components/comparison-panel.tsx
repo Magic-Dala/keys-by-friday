@@ -17,6 +17,7 @@ function evidenceAwareYesNo(value: unknown, queryBacked: boolean) {
 function fieldLabel(path: string) {
   const labels: Record<string, string> = {
     "property.bathrooms": "Bathroom count",
+    "property.bathroomsMinEvidence": "Exact bathroom count",
     "policies.petsAllowed": "Pet policy",
     "policies.parkingAvailable": "Parking availability",
     "media.primaryImageUrl": "Listing photo",
@@ -39,6 +40,57 @@ function statusLabel(status: string | undefined) {
   if (status === "fail") return "Fails a confirmed requirement";
   if (status === "evidence_only") return "Needs stronger verification";
   return "Unknown";
+}
+
+function decisionOutcome(
+  comparison: CanonicalComparison | undefined,
+  listings: Listing[],
+) {
+  const results = comparison?.results ?? [];
+  if (!results.length) return undefined;
+
+  const unresolved = results.filter(
+    (result) => result.hardConstraintStatus !== "fail" && !result.decisionReady,
+  );
+  if (unresolved.length) {
+    const unknowns = Array.from(
+      new Set(unresolved.flatMap((result) => result.decisionUnknowns)),
+    ).map(fieldLabel);
+    const detail = unknowns.length
+      ? ` Verify ${unknowns.join(", ")} before making a final recommendation.`
+      : " More evidence is required before making a final recommendation.";
+    return {
+      title: "Decision pending",
+      detail: `At least one viable option is not decision-ready.${detail}`,
+    };
+  }
+
+  const ready = results
+    .filter(
+      (result) => result.hardConstraintStatus === "pass" && result.decisionReady,
+    )
+    .sort((left, right) => {
+      const rankDelta = (left.rank ?? Number.POSITIVE_INFINITY) -
+        (right.rank ?? Number.POSITIVE_INFINITY);
+      if (rankDelta !== 0) return rankDelta;
+      return (right.score ?? Number.NEGATIVE_INFINITY) -
+        (left.score ?? Number.NEGATIVE_INFINITY);
+    });
+
+  if (ready.length) {
+    const best = ready[0];
+    const optionIndex = listings.findIndex((listing) => listing.id === best.listingId);
+    const optionLabel = optionIndex >= 0 ? `Option ${optionIndex + 1}` : "The top option";
+    return {
+      title: "Decision",
+      detail: `${optionLabel} is the strongest decision-ready choice based on the confirmed comparison evidence.`,
+    };
+  }
+
+  return {
+    title: "Decision",
+    detail: "None of these options satisfies the confirmed hard requirements.",
+  };
 }
 
 function evidenceLabel(value: Record<string, unknown>) {
@@ -83,6 +135,8 @@ export function ComparisonPanel({
   error?: string;
   onClose: () => void;
 }) {
+  const decision = decisionOutcome(comparison, listings);
+
   return (
     <section className="comparisonPanel" aria-labelledby="comparison-title">
       <div className="sectionHeading">
@@ -222,6 +276,13 @@ export function ComparisonPanel({
           );
         })}
       </div>
+
+      {decision ? (
+        <div className="comparisonExplanation" aria-label="Decision outcome">
+          <h3>{decision.title}</h3>
+          <p>{decision.detail}</p>
+        </div>
+      ) : null}
     </section>
   );
 }
