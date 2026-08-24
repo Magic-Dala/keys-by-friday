@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 AGENT_ROUTINE_MODEL_ORDER: tuple[str, ...] = (
     "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
+    "gemini-3.7-flash",
 )
 AGENT_REASONING_MODEL = "gemini-3.7-flash"
 
