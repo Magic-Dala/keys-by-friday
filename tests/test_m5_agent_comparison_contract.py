@@ -96,7 +96,7 @@ def test_session_search_compare_keeps_existing_path_and_adds_canonical_envelope(
     assert [item["listingId"] for item in result["results"]] == ["one", "two"]
 
 
-def test_session_and_restored_canonical_paths_share_same_comparison_results():
+def test_session_and_restored_canonical_paths_share_same_comparison_semantics():
     rows = [_listing("one"), _listing("three")]
     req = _requirements()
     context = SimpleNamespace(
@@ -117,7 +117,50 @@ def test_session_and_restored_canonical_paths_share_same_comparison_results():
         json.loads(json.dumps(agent_module._requirements_to_dict(req))),
     )
 
-    assert {key: session[key] for key in ("schemaVersion", "listingIds", "results")} == restored
+    assert session["schemaVersion"] == restored["schemaVersion"]
+    assert session["listingIds"] == restored["listingIds"]
+    for session_result, restored_result in zip(session["results"], restored["results"]):
+        assert {
+            key: value
+            for key, value in session_result.items()
+            if key not in {"score", "rank"}
+        } == {
+            key: value
+            for key, value in restored_result.items()
+            if key not in {"score", "rank"}
+        }
+    assert [item["rank"] for item in session["results"]] == [1, 2]
+    assert [item["rank"] for item in restored["results"]] == [None, None]
+
+
+def test_session_comparison_preserves_search_rank_and_score_when_selection_order_differs():
+    strong = _listing("strong")
+    weak = _listing("weak")
+    req = _requirements()
+    context = SimpleNamespace(
+        state={
+            agent_module._REQUIREMENTS_STATE_KEY: agent_module._requirements_to_dict(req),
+            agent_module._CANDIDATES_STATE_KEY: [
+                {
+                    "listing": strong.to_dict(),
+                    "score": 92.5,
+                    "current_search_rank": 1,
+                },
+                {
+                    "listing": weak.to_dict(),
+                    "score": 71.0,
+                    "current_search_rank": 2,
+                },
+            ],
+            agent_module._VERIFIED_STATE_KEY: {},
+        }
+    )
+
+    result = compare_candidates("weak,strong", verify_missing=False, tool_context=context)
+
+    assert result["listingIds"] == ["weak", "strong"]
+    assert [item["rank"] for item in result["results"]] == [2, 1]
+    assert [item["score"] for item in result["results"]] == [71.0, 92.5]
 
 
 def test_firestore_json_round_trip_preserves_evidence_only_and_verification_semantics():
