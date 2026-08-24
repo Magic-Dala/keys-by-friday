@@ -46,7 +46,7 @@ def test_agent_model_policy_is_internal_and_ignores_env(monkeypatch):
     assert AGENT_REASONING_MODEL == "gemini-3.7-flash"
     assert AGENT_ROUTINE_MODEL_ORDER == (
         "gemini-3.5-flash-lite",
-        "gemini-3.5-flash",
+        "gemini-3.7-flash",
     )
     assert model.search_model == AGENT_REASONING_MODEL
     assert model.model == AGENT_ROUTINE_MODEL_ORDER[0]
