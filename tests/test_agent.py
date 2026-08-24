@@ -32,6 +32,8 @@ def test_agent_output_contract_requires_compact_grouped_lists():
     assert '"2B2B" means minimum 2 bedrooms' in instruction
     assert "bounded to at most 20 source postings" in instruction
     assert "call get_listing_details at most once" in instruction
+    assert "End every comparison answer with a `## Decision` section" in instruction
+    assert "Do not omit the decision" in instruction
 
 
 def test_mock_tool_path_works_without_external_keys(monkeypatch):

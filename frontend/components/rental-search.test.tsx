@@ -718,11 +718,13 @@ it("loads deterministic comparison facts and the Agent explanation", async () =>
           softPreferenceEvidence: [],
           tradeoffs: [],
           comparisonUnknowns: [
+            "property.bathrooms",
             "policies.parkingAvailable",
             "media.primaryImageUrl",
             "availability.moveInDate",
           ],
           decisionUnknowns: [
+            "property.bathrooms",
             "policies.parkingAvailable",
             "media.primaryImageUrl",
             "availability.moveInDate",
@@ -781,4 +783,8 @@ it("loads deterministic comparison facts and the Agent explanation", async () =>
     .getByText("Parking available")
     .closest("div");
   expect(parkingRow).toHaveTextContent("Needs verification");
+  const decisionOutcome = screen.getByLabelText("Decision outcome");
+  expect(within(decisionOutcome).getByRole("heading", { name: "Decision pending" })).toBeVisible();
+  expect(decisionOutcome).toHaveTextContent("Bathroom count");
+  expect(decisionOutcome).toHaveTextContent("before making a final recommendation");
 });

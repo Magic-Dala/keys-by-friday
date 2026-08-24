@@ -2199,6 +2199,12 @@ Answer format:
     A candidate with hard_constraint_status=fail must not be recommended as satisfying
     the current requirements. Conditional recommendations are allowed when uncertainty
     is stated explicitly.
+22. End every comparison answer with a `## Decision` section. Do not omit the decision
+    merely because a required fact is unknown. If any otherwise viable candidate has
+    decision_ready=false, state that the decision is pending or conditional and name its
+    decision_unknowns (for example an unverified bathroom count). Treat unknown and
+    evidence_only as unresolved, never as pass. Only make a final recommendation when the
+    structured comparison evidence supports it.
 
 """.strip(),
     tools=[search_listings, get_listing_details, get_route_details, compare_candidates],
