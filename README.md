@@ -1,14 +1,43 @@
-# Keys by Friday
+<p align="center">
+  <img src="frontend/public/brand-mark.svg" width="80" alt="Keys by Friday brand mark" />
+</p>
 
-AI rental search built with **Next.js + FastAPI + Google ADK**.
+<h1 align="center">Keys by Friday</h1>
+
+<p align="center">
+  <a href="https://github.com/Taoyuan-AI-Lab/keys-by-friday/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Taoyuan-AI-Lab/keys-by-friday/ci.yml?style=flat-square&label=CI" alt="CI status" />
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12" />
+  </a>
+  <a href="https://nextjs.org/">
+    <img src="https://img.shields.io/badge/Next.js-16.3.0-000000?style=flat-square&logo=next.js&logoColor=white" alt="Next.js 16.3.0" />
+  </a>
+  <a href="https://fastapi.tiangolo.com/">
+    <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  </a>
+  <a href="https://google.github.io/adk-docs/">
+    <img src="https://img.shields.io/badge/Google_ADK-4285F4?style=flat-square&logo=google&logoColor=white" alt="Google ADK" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-Apache--2.0-2ea44f?style=flat-square" alt="Apache 2.0 license" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="docs/img/keys-by-friday-mobile-mockup.png" width="960" alt="Keys by Friday mobile product mockup" />
+</p>
+
+AI rental search that helps you move from scattered listings to a confident decision. Keys by Friday searches with your priorities, verifies the details that matter, and explains the trade-offs before you shortlist a home.
+
+Built with **Next.js + FastAPI + Google ADK**.
 
 Production uses Firestore for product data and an official persistent ADK
-database session service for restart-safe conversational state. See
-`docs/firestore.md`, `docs/adk-sessions.md`, and
-`docs/comparison-shortlist.md`. Public deployment cost protection is explained
-in `docs/rate-limits.md`.
-
-If you just want to run the project, start here.
+database session service for restart-safe conversational state. See the
+[Firestore](docs/firestore.md), [persistent ADK sessions](docs/adk-sessions.md),
+and [comparison and shortlist](docs/comparison-shortlist.md) guides. Public
+deployment cost protection is explained in [rate limits](docs/rate-limits.md).
 
 ## Quick Start
 
@@ -62,17 +91,17 @@ or:
 .\kbf start
 ```
 
-Then open **http://localhost:3000**.
+Then open [http://localhost:3000](http://localhost:3000).
 
 Useful local URLs:
 
 | Service | URL |
 |---|---|
-| Product UI | http://localhost:3000 |
-| API docs | http://localhost:8000/docs |
-| Backend health | http://localhost:8000/health |
-| Backend readiness | http://localhost:8000/ready |
-| ADK Web | http://localhost:8765 |
+| Product UI | [localhost:3000](http://localhost:3000) |
+| API docs | [localhost:8000/docs](http://localhost:8000/docs) |
+| Backend health | [localhost:8000/health](http://localhost:8000/health) |
+| Backend readiness | [localhost:8000/ready](http://localhost:8000/ready) |
+| ADK Web | [localhost:8765](http://localhost:8765) |
 
 Press `Ctrl+C` once to stop the frontend and backend.
 
@@ -104,7 +133,7 @@ or:
 .\kbf agent
 ```
 
-Then open **http://localhost:8765**.
+Then open [http://localhost:8765](http://localhost:8765).
 
 This wraps:
 
@@ -128,7 +157,7 @@ The repository-local form works too:
 .\kbf start --frontend-port 3001 --backend-port 8021
 ```
 
-## How the Product Connects
+## How Keys by Friday Connects
 
 ```text
 Browser
@@ -144,7 +173,7 @@ AgentService
 
 The frontend talks only to the FastAPI API. The backend owns the ADK adapter. Rental search, ranking, verification, and provider logic stay in `rental_agent/**`.
 
-## Team Ownership
+## Project Ownership
 
 ```text
 frontend/**      → Frontend
@@ -153,11 +182,19 @@ rental_agent/**  → ADK Agent and rental decision logic
 docs/**          → Shared project references
 ```
 
-The shared web contract is intentionally small:
+The shared web contract is:
 
 ```text
-GET  /health
-POST /api/chat
+GET    /health
+GET    /ready
+POST   /api/chat
+POST   /api/route
+POST   /api/compare
+GET    /api/conversations
+GET    /api/shortlist
+POST   /api/shortlist
+PATCH  /api/shortlist/{listingId}
+DELETE /api/shortlist/{listingId}
 ```
 
 Feature work should extend this baseline instead of creating a parallel architecture.
