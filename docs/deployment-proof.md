@@ -1,6 +1,6 @@
 # Private Backend MVP Deployment Proof
 
-> Evidence captured on August 24, 2026.  
+> Evidence captured on August 24, 2026.
 > This document contains no API keys, authentication tokens, database passwords,
 > Secret Manager values, or private environment files.
 

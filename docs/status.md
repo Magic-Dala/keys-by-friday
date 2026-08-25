@@ -5,7 +5,10 @@
 
 ## Current Stage
 
-**Project baseline established: the web integration, shared API contract, structured listing flow, commute evidence, comparison intelligence, and Google ADK Agent path are runnable together.**
+**Private backend MVP deployed and verified: the web integration, shared API
+contract, structured listing flow, commute evidence, comparison intelligence,
+and Google ADK Agent path are runnable together, and the authenticated backend
+path has been exercised on Google Cloud Run.**
 
 Current end-to-end shape:
 
@@ -109,6 +112,11 @@ Next.js Frontend
 - ✅ Complete shortlist CRUD with authenticated note updates
 - ✅ Distributed Firestore rate limit for anonymous `/api/chat` and `/api/compare`
 - ✅ HTTP 429, `Retry-After`, and browser-visible rate-limit response headers
+- ✅ Private Cloud Run MVP deployment in `us-west1` with authenticated invocation
+- ✅ Dedicated Cloud Run service identity for Vertex AI, Firestore, and Cloud SQL access
+- ✅ Secret Manager references for provider, Maps, and ADK database credentials
+- ✅ Production startup probe on `/ready` and liveness probe on `/health`
+- ✅ Request-based Cloud Run billing with zero minimum instances and an active-revision maximum of one
 
 ## In Progress / Next Product Work
 
@@ -122,10 +130,11 @@ The web vertical slice now returns both the Agent's readable `message` and struc
 
 ## Latest Verified Evidence
 
-As of the current Agent decision-intelligence, persistence, Firebase-auth, and
-per-user Agent rate-limit integration work:
+As of the August 24, 2026 private Cloud Run deployment verification and the
+current Agent decision-intelligence, persistence, Firebase-auth, and per-user
+Agent rate-limit integration work:
 
-- ✅ Full Python / Backend / Agent suite: 219 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, per-user Agent rate limiting, decision intelligence, and Agent observability
+- ✅ Full Python / Backend / Agent suite: 221 passed, including Firebase auth, Firestore persistence, bounded Recent Searches pagination, persistent ADK sessions, database connectivity readiness, restart restoration, same-conversation concurrency, commute integration, refreshed comparison snapshots, shortlist CRUD, cross-user isolation, per-user Agent rate limiting, decision intelligence, and Agent observability
 - ✅ Milestone 4 ADK session suite: 5 passed without Gemini or cloud quota
 - ✅ Agent observability contract suite: 14 passed
 - ✅ Backend container built locally with Python 3.12
@@ -134,6 +143,14 @@ per-user Agent rate-limit integration work:
 - ✅ Next.js production build passed
 - ✅ Frontend suite: 10 files / 78 tests passed, including Firebase auth, Recent Searches, and the structured comparison interaction
 - ✅ TypeScript typecheck passed
+- ✅ Cloud Run revision `keys-by-friday-backend-1-00008-m7t` became healthy in `us-west1` and received 100% of service traffic
+- ✅ Unauthenticated Cloud Run access returned HTTP 403; authenticated `/health` and `/ready` requests returned HTTP 200
+- ✅ Production readiness reported Firebase auth configured, Firestore persistence configured, the anonymous rate limit backed by Firestore, the ADK database session connected, and the Agent and provider configured
+- ✅ Live production `/api/chat` returned HTTP 200 through Google ADK using `gemini-3.7-flash`; RealtyAPI searched Apartments.com, Zillow, and Realtor successfully with no failed source
+- ✅ Firestore production evidence confirmed a persisted anonymous rate-limit counter and structured shortlist snapshot
+- ✅ Cloud SQL instance `kbf-adk-sessions` was `RUNNABLE` on PostgreSQL 15, and backend readiness confirmed `adk_session: connected`
+- ✅ Cloud Run startup and liveness probes, 180-second request timeout, concurrency of 8, request-based billing, zero minimum instances, and an active-revision maximum of one were verified
+- ✅ Sanitized screenshots and the permanent verification record are available in [`docs/deployment-proof.md`](deployment-proof.md)
 - ✅ Frontend page rendered locally
 - ✅ Backend health endpoint responded successfully
 - ✅ Real `/api/chat` request reached Google ADK and returned real Mountain View rental matches
@@ -158,6 +175,17 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 - Full ADK sessions persist in database mode. The local memory mode intentionally
   loses them on restart, and the current whole-turn lock is process-local, so
   multi-instance deployment needs a distributed-coordination review.
+- The deployed Cloud Run backend intentionally requires Google Cloud
+  authentication. The hosted public-browser path remains future work; the local
+  frontend and authenticated Cloud Run smoke test are the current hackathon demo
+  arrangement.
+- The hackathon Cloud SQL instance is single-zone and currently does not enable
+  automated backups, point-in-time recovery, high availability, or deletion
+  protection. Those controls are required before treating it as a long-term
+  commercial production database.
+- Cloud SQL may be stopped after evidence capture to reduce hackathon costs. A
+  stopped database intentionally makes `/ready` and database-backed Agent turns
+  unavailable until the instance is restarted.
 - Background monitoring and landlord outreach are outside the current MVP.
 
 ## Update Rule
