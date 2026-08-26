@@ -718,14 +718,194 @@ p {
   padding: 30px 0 38px;
 }
 
-.agentRequirements {
+.livingArchitecture {
+  display: grid;
+  gap: 18px;
+  margin: 24px 0 2px;
+  padding: 20px;
+  border: 1px solid var(--color-line);
+  border-radius: 20px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.architectureHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.architectureHeader h2 {
+  margin: 6px 0 0;
+  color: var(--color-ink);
+  font-size: 19px;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+
+.architectureLiveBadge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 29px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.architectureLiveBadge i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.architectureLiveBadge.isActive {
+  background: var(--color-brand-soft);
+  color: var(--color-brand-hover);
+}
+
+.architectureLiveBadge.isActive i {
+  animation: architecturePulse 1.25s ease-in-out infinite;
+}
+
+.architectureSummary {
+  margin: -7px 0 0;
+  color: var(--color-copy);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.architectureFlow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(112px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 3px;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.architectureNode {
+  position: relative;
+  min-width: 112px;
+  min-height: 138px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background: var(--color-surface-muted);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease, background-color 180ms ease;
+}
+
+.architectureNodeMarker {
+  position: relative;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.architectureNodeMarker svg {
+  width: 14px;
+  height: 14px;
+}
+
+.architectureNode > div {
+  min-width: 0;
+}
+
+.architectureNodeStatus,
+.architectureNode strong,
+.architectureNode small {
+  display: block;
+}
+
+.architectureNodeStatus {
+  margin-bottom: 5px;
+  color: var(--color-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.architectureNode strong {
+  color: var(--color-copy);
+  font-size: 13px;
+}
+
+.architectureNode small {
+  margin-top: 5px;
+  color: var(--color-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.architectureNode.is-done {
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-line));
+  background: var(--color-success-soft);
+}
+
+.architectureNode.is-done .architectureNodeMarker {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.architectureNode.is-ready {
+  border-color: color-mix(in srgb, var(--color-brand) 30%, var(--color-line));
+}
+
+.architectureNode.is-active {
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand) 12%, transparent);
+  transform: translateY(-1px);
+}
+
+.architectureNode.is-active .architectureNodeMarker {
+  border-color: var(--color-brand);
+  background: var(--color-brand);
+  color: var(--color-surface);
+}
+
+.architectureNode.is-active .architectureNodeMarker::after {
+  position: absolute;
+  inset: -5px;
+  border: 2px solid color-mix(in srgb, var(--color-brand) 34%, transparent);
+  border-radius: inherit;
+  content: "";
+  animation: architecturePulseRing 1.25s ease-out infinite;
+}
+
+.architectureRequirements {
   display: grid;
   gap: 14px;
-  margin: -12px 0 34px;
-  padding: 16px;
-  border: 1px solid var(--color-line);
-  border-radius: 16px;
-  background: var(--color-surface);
+  padding-top: 15px;
+  border-top: 1px solid var(--color-line);
+}
+
+@keyframes architecturePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.72); }
+}
+
+@keyframes architecturePulseRing {
+  from { opacity: 0.8; transform: scale(0.8); }
+  to { opacity: 0; transform: scale(1.22); }
 }
 
 .requirementSnapshot,

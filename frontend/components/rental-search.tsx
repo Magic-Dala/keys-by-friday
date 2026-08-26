@@ -88,6 +88,9 @@ function requirementLabels(requirements?: SearchRequirements) {
   return labels;
 }
 
+type ArchitectureActivity = "idle" | "understanding" | "updating" | "executing" | "searching";
+type ArchitectureNodeStatus = "done" | "active" | "ready" | "waiting";
+
 interface Turn {
   id: string;
   role: "user" | "agent";
@@ -133,6 +136,8 @@ export function RentalSearch() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [requirements, setRequirements] = useState<SearchRequirements>();
   const [missingRequirements, setMissingRequirements] = useState<string[]>([]);
+  const [searchPerformed, setSearchPerformed] = useState(false);
+  const [architectureActivity, setArchitectureActivity] = useState<ArchitectureActivity>("idle");
   const [commuteEvaluation, setCommuteEvaluation] = useState<CommuteEvaluation>();
   const [mobileResultsView, setMobileResultsView] = useState<"list" | "map">("list");
   const [highlightedListingId, setHighlightedListingId] = useState<string>();
@@ -193,6 +198,8 @@ export function RentalSearch() {
     setListings([]);
     setRequirements(undefined);
     setMissingRequirements([]);
+    setSearchPerformed(false);
+    setArchitectureActivity("idle");
     setCommuteEvaluation(undefined);
     setMobileResultsView("list");
     setHighlightedListingId(undefined);
@@ -279,7 +286,7 @@ export function RentalSearch() {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [authDialogOpen]);
 
-  async function submitMessage(rawMessage: string) {
+  async function submitMessage(rawMessage: string, resolvingRequirement?: string) {
     const message = rawMessage.trim();
     if (!message || loading) return;
 
@@ -292,6 +299,20 @@ export function RentalSearch() {
     requestRef.current = controller;
     setTurns((current) => [...current, { id: turnId("user"), role: "user", text: message }]);
     setDraft("");
+    const completingFinalGuidedRequirement = Boolean(
+      resolvingRequirement
+      && missingRequirements.length === 1
+      && missingRequirements[0] === resolvingRequirement,
+    );
+    setArchitectureActivity(
+      !requirements
+        ? "understanding"
+        : completingFinalGuidedRequirement
+          ? "executing"
+          : missingRequirements.length > 0
+            ? "updating"
+            : "searching",
+    );
     setLoading(true);
     setError(undefined);
     setNotice(undefined);
@@ -308,6 +329,7 @@ export function RentalSearch() {
       setListings(response.listings);
       setRequirements(response.requirements);
       setMissingRequirements(response.missingRequirements ?? []);
+      setSearchPerformed(response.searchPerformed);
       setCommuteEvaluation(response.commuteEvaluation);
       routeSelection.reset();
       setMobileResultsView("list");
@@ -331,6 +353,7 @@ export function RentalSearch() {
     } finally {
       if (requestRef.current !== controller) return;
       requestRef.current = null;
+      setArchitectureActivity("idle");
       setLoading(false);
     }
   }
@@ -439,6 +462,8 @@ export function RentalSearch() {
     setListings([]);
     setRequirements(undefined);
     setMissingRequirements([]);
+    setSearchPerformed(false);
+    setArchitectureActivity("idle");
     setCommuteEvaluation(undefined);
     routeSelection.reset();
     setMobileResultsView("list");
@@ -468,6 +493,8 @@ export function RentalSearch() {
     setListings(search.listings);
     setRequirements(undefined);
     setMissingRequirements([]);
+    setSearchPerformed(search.listings.length > 0);
+    setArchitectureActivity("idle");
     setCommuteEvaluation(undefined);
     setMobileResultsView("list");
     setHighlightedListingId(undefined);
@@ -603,10 +630,103 @@ export function RentalSearch() {
     return listing ? [listing] : [];
   });
   const hasActiveSearch = Boolean(conversationId) || turns.length > 0 || listings.length > 0;
-  const guidedRequirement = missingRequirements
-    .map((name) => guidedRequirementSteps[name])
-    .find((step) => step !== undefined);
+  const guidedRequirementName = missingRequirements.find((name) => guidedRequirementSteps[name] !== undefined);
+  const guidedRequirement = guidedRequirementName ? guidedRequirementSteps[guidedRequirementName] : undefined;
   const activeRequirementLabels = requirementLabels(requirements);
+  const architectureSummary =
+    loading && architectureActivity === "understanding"
+      ? "Understanding your request and shaping the search architecture…"
+      : loading && architectureActivity === "updating"
+        ? "Updating the architecture with your latest requirement…"
+        : loading && architectureActivity === "executing"
+          ? "Final requirement received. Validating the plan and executing the next step…"
+          : loading && architectureActivity === "searching"
+            ? "Executing the search with the current architecture…"
+            : comparisonLoading
+              ? "Comparing selected homes and updating the decision path…"
+              : missingRequirements.length > 0
+                ? `Architecture updated · ${missingRequirements.length} required ${missingRequirements.length === 1 ? "input" : "inputs"} still needed.`
+                : searchPerformed
+                  ? `Search complete · ${listings.length} ${listings.length === 1 ? "home has" : "homes have"} entered the evidence path.`
+                  : requirements
+                    ? "Requirements are complete. The search path is ready to execute."
+                    : "The architecture will evolve as the agent understands your search.";
+  const architectureSteps: { label: string; detail: string; status: ArchitectureNodeStatus }[] = [
+    {
+      label: "Understand",
+      detail: requirements
+        ? `${activeRequirementLabels.length} preference${activeRequirementLabels.length === 1 ? "" : "s"} captured`
+        : loading
+          ? "Interpreting your request…"
+          : "Waiting for your request",
+      status: requirements ? "done" : loading ? "active" : "waiting",
+    },
+    {
+      label: "Requirements",
+      detail: loading && (architectureActivity === "updating" || architectureActivity === "executing")
+        ? architectureActivity === "executing" ? "Final input is being applied…" : "Applying your answer…"
+        : requirements && missingRequirements.length === 0
+          ? "Required inputs complete"
+          : missingRequirements.length > 0
+            ? `${missingRequirements.length} ${missingRequirements.length === 1 ? "input" : "inputs"} still needed`
+            : "Builds from your conversation",
+      status: loading && (architectureActivity === "updating" || architectureActivity === "executing")
+        ? "active"
+        : requirements && missingRequirements.length === 0
+          ? "done"
+          : missingRequirements.length > 0
+            ? "active"
+            : "waiting",
+    },
+    {
+      label: "Search",
+      detail: loading && (architectureActivity === "executing" || architectureActivity === "searching")
+        ? "Agent is validating and executing…"
+        : searchPerformed
+          ? `${listings.length} ${listings.length === 1 ? "home" : "homes"} returned`
+          : missingRequirements.length > 0
+            ? "Waiting for required inputs"
+            : requirements
+              ? "Ready to execute"
+              : "Waiting",
+      status: loading && (architectureActivity === "executing" || architectureActivity === "searching")
+        ? "active"
+        : searchPerformed
+          ? "done"
+          : requirements && missingRequirements.length === 0
+            ? "ready"
+            : "waiting",
+    },
+    {
+      label: "Verify evidence",
+      detail: searchPerformed
+        ? listings.length > 0
+          ? "Evidence is available to inspect"
+          : "No homes to verify yet"
+        : "Starts after search",
+      status: searchPerformed && listings.length > 0 ? "done" : "waiting",
+    },
+    {
+      label: "Compare",
+      detail: comparisonLoading
+        ? "Building trade-offs…"
+        : comparison
+          ? "Trade-offs generated"
+          : listings.length >= 2
+            ? "Select 2+ homes"
+            : "Waiting for candidates",
+      status: comparisonLoading ? "active" : comparison ? "done" : listings.length >= 2 ? "ready" : "waiting",
+    },
+    {
+      label: "Decide",
+      detail: comparison
+        ? comparison.results.every((result) => result.decisionReady)
+          ? "Decision evidence is ready"
+          : "Review remaining unknowns"
+        : "Unlocks after comparison",
+      status: comparison ? "ready" : "waiting",
+    },
+  ];
   const journeyStage =
     listings.length === 0 ? 0 : turns.length === 0 ? 1 : compareIds.length < 2 ? 1 : showComparison ? 3 : 2;
 
@@ -827,6 +947,65 @@ export function RentalSearch() {
                 <p className="restoredSearchNotice" role="status">{restoredSearchNotice}</p>
               ) : null}
 
+              <section className="livingArchitecture" aria-label="Living Architecture">
+                <div className="architectureHeader">
+                  <div>
+                    <span className="sectionEyebrow">Living Architecture</span>
+                    <h2>Your search, updating as the agent works.</h2>
+                  </div>
+                  <span className={`architectureLiveBadge ${loading || comparisonLoading ? "isActive" : ""}`}>
+                    <i aria-hidden="true" />
+                    {loading || comparisonLoading ? "Updating live" : "Live state"}
+                  </span>
+                </div>
+                <p className="architectureSummary" aria-live="polite">{architectureSummary}</p>
+                <ol className="architectureFlow">
+                  {architectureSteps.map((step, index) => (
+                    <li className={`architectureNode is-${step.status}`} data-status={step.status} key={step.label}>
+                      <span className="architectureNodeMarker" aria-hidden="true">
+                        {step.status === "done" ? <CheckIcon /> : index + 1}
+                      </span>
+                      <div>
+                        <span className="architectureNodeStatus">
+                          {step.status === "done" ? "Done" : step.status === "active" ? "Live" : step.status === "ready" ? "Ready" : "Waiting"}
+                        </span>
+                        <strong>{step.label}</strong>
+                        <small>{step.detail}</small>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+                {activeRequirementLabels.length > 0 || guidedRequirement ? (
+                  <div className="architectureRequirements">
+                    {activeRequirementLabels.length > 0 ? (
+                      <div className="requirementSnapshot">
+                        <span>Agent remembers</span>
+                        <div className="requirementChips">
+                          {activeRequirementLabels.map((label) => <span key={label}>{label}</span>)}
+                        </div>
+                      </div>
+                    ) : null}
+                    {guidedRequirement ? (
+                      <div className="guidedRequirement">
+                        <strong>{guidedRequirement.question}</strong>
+                        <div className="guidedRequirementOptions">
+                          {guidedRequirement.options.map((option) => (
+                            <button
+                              type="button"
+                              key={option.label}
+                              onClick={() => void submitMessage(option.message, guidedRequirementName)}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                        <span>Or type another answer below.</span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </section>
+
               <div className="thread">
                 {turns.map((turn) => (
                   <article className={`turn ${turn.role}`} key={turn.id}>
@@ -848,36 +1027,6 @@ export function RentalSearch() {
                   </article>
                 ) : null}
               </div>
-
-              {!loading && (activeRequirementLabels.length > 0 || guidedRequirement) ? (
-                <section className="agentRequirements" aria-label="Current rental requirements">
-                  {activeRequirementLabels.length > 0 ? (
-                    <div className="requirementSnapshot">
-                      <span>Agent remembers</span>
-                      <div className="requirementChips">
-                        {activeRequirementLabels.map((label) => <span key={label}>{label}</span>)}
-                      </div>
-                    </div>
-                  ) : null}
-                  {guidedRequirement ? (
-                    <div className="guidedRequirement">
-                      <strong>{guidedRequirement.question}</strong>
-                      <div className="guidedRequirementOptions">
-                        {guidedRequirement.options.map((option) => (
-                          <button
-                            type="button"
-                            key={option.label}
-                            onClick={() => void submitMessage(option.message)}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                      <span>Or type another answer below.</span>
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
 
               {!loading && listings.length ? (
                 <section className="resultsSection" aria-labelledby="results-title">

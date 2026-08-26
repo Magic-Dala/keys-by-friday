@@ -130,6 +130,10 @@ beforeEach(() => {
 });
 
 it("shows remembered requirements and sends a guided choice in the same conversation", async () => {
+  let finishFinalSearch: ((response: SearchResponse) => void) | undefined;
+  const finalSearch = new Promise<SearchResponse>((resolve) => {
+    finishFinalSearch = resolve;
+  });
   vi.mocked(sendChat)
     .mockResolvedValueOnce({
       ...searchResponse,
@@ -144,6 +148,7 @@ it("shows remembered requirements and sends a guided choice in the same conversa
         softPreferences: ["quiet"],
       },
       missingRequirements: ["commute_destination", "commute_travel_mode"],
+      searchPerformed: false,
     })
     .mockResolvedValueOnce({
       ...searchResponse,
@@ -159,7 +164,9 @@ it("shows remembered requirements and sends a guided choice in the same conversa
         softPreferences: ["quiet"],
       },
       missingRequirements: ["commute_travel_mode"],
-    });
+      searchPerformed: false,
+    })
+    .mockImplementationOnce(() => finalSearch);
 
   render(<RentalSearch />);
   const user = userEvent.setup();
@@ -169,10 +176,14 @@ it("shows remembered requirements and sends a guided choice in the same conversa
   );
   await user.click(screen.getByRole("button", { name: "Ask rental agent" }));
 
-  expect(await screen.findByText("Agent remembers")).toBeVisible();
+  const architecture = await screen.findByRole("region", { name: "Living Architecture" });
+  expect(within(architecture).getByText("Agent remembers")).toBeVisible();
   expect(screen.getByText("Mountain View, CA")).toBeVisible();
   expect(screen.getByText("≤ $4,000/mo")).toBeVisible();
   expect(screen.getByText("Where do you commute to?")).toBeVisible();
+  expect(within(architecture).getByText("Architecture updated · 2 required inputs still needed.")).toBeVisible();
+  expect(within(architecture).getByText("2 inputs still needed")).toBeVisible();
+  expect(within(architecture).getByText("Waiting for required inputs")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Google Mountain View" }));
 
@@ -188,6 +199,47 @@ it("shows remembered requirements and sends a guided choice in the same conversa
   });
   expect(await screen.findByText("How do you usually commute?")).toBeVisible();
   expect(screen.getByText("to Google Mountain View")).toBeVisible();
+  expect(within(architecture).getByText("Architecture updated · 1 required input still needed.")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Drive" }));
+
+  await waitFor(() => {
+    expect(sendChat).toHaveBeenNthCalledWith(
+      3,
+      {
+        message: "My commute travel mode is DRIVE.",
+        conversationId: "conversation-1",
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+  expect(within(architecture).getByText("Updating live")).toBeVisible();
+  expect(within(architecture).getByText("Final requirement received. Validating the plan and executing the next step…")).toBeVisible();
+  expect(within(architecture).getByText("Agent is validating and executing…")).toBeVisible();
+
+  await act(async () => {
+    finishFinalSearch?.({
+      ...searchResponse,
+      message: "I found one strong match.",
+      requirements: {
+        city: "Mountain View",
+        state: "CA",
+        maxRent: 4000,
+        minBedrooms: 2,
+        maxCommuteMinutes: 30,
+        commuteDestination: "Google Mountain View",
+        commuteTravelMode: "DRIVE",
+        softPreferences: ["quiet"],
+      },
+      missingRequirements: [],
+      searchPerformed: true,
+    });
+  });
+
+  expect(await within(architecture).findByText("Search complete · 1 home has entered the evidence path.")).toBeVisible();
+  expect(within(architecture).getByText("Required inputs complete")).toBeVisible();
+  expect(within(architecture).getByText("1 home returned")).toBeVisible();
+  expect(within(architecture).getByText("Evidence is available to inspect")).toBeVisible();
 });
 
 function recentSearch(overrides: Partial<RecentSearch> = {}): RecentSearch {
