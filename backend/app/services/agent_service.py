@@ -21,6 +21,7 @@ from backend.app.models.search import (
     CommuteResponse,
     ListingResponse,
     RouteDetailResponse,
+    SearchRequirementsResponse,
     SearchResponse,
     SourcePostingResponse,
 )
@@ -384,6 +385,72 @@ def _commute_from_tool_payload(
         routingPreference=(
             str(value["routing_preference"]) if value.get("routing_preference") else None
         ),
+    )
+
+
+def _requirements_from_tool_payload(
+    search_payload: dict[str, Any] | None,
+) -> SearchRequirementsResponse | None:
+    if not isinstance(search_payload, dict):
+        return None
+    value = search_payload.get("effective_requirements")
+    if not isinstance(value, dict):
+        return None
+
+    def text(name: str) -> str | None:
+        raw = value.get(name)
+        normalized = str(raw).strip() if raw is not None else ""
+        return normalized or None
+
+    def number(name: str) -> float | None:
+        raw = value.get(name)
+        return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+
+    def boolean(name: str) -> bool | None:
+        raw = value.get(name)
+        return raw if isinstance(raw, bool) else None
+
+    soft_preferences = value.get("soft_preferences")
+    return SearchRequirementsResponse(
+        city=text("city"),
+        state=text("state"),
+        maxRent=number("max_rent"),
+        minBedrooms=number("min_bedrooms"),
+        maxBedrooms=number("max_bedrooms"),
+        minBathrooms=number("min_bathrooms"),
+        maxBathrooms=number("max_bathrooms"),
+        petsRequired=boolean("pets_required"),
+        parkingRequired=boolean("parking_required"),
+        commuteDestination=text("commute_destination"),
+        maxCommuteMinutes=number("max_commute_minutes"),
+        commuteTravelMode=text("commute_travel_mode"),
+        softPreferences=(
+            [str(item).strip() for item in soft_preferences if str(item).strip()]
+            if isinstance(soft_preferences, (list, tuple))
+            else []
+        ),
+    )
+
+
+def _missing_requirements_from_tool_payload(
+    search_payload: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(search_payload, dict):
+        return []
+    value = search_payload.get("missing_requirements")
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _search_performed_from_tool_payload(
+    search_payload: dict[str, Any] | None,
+) -> bool:
+    """Return true only when this turn actually queried a listing provider."""
+
+    return bool(
+        isinstance(search_payload, dict)
+        and search_payload.get("provider_search_performed") is True
     )
 
 
@@ -1089,6 +1156,8 @@ class AgentService:
                 detail_payloads,
                 comparison_payload,
             ),
+            requirements=_requirements_from_tool_payload(search_payload),
+            missingRequirements=_missing_requirements_from_tool_payload(search_payload),
             commuteEvaluation=_commute_evaluation_from_tool_payload(
                 search_payload.get("commute_summary") if search_payload else None
             ),
@@ -1096,7 +1165,7 @@ class AgentService:
             comparison=_canonical_comparison_from_tool_payload(
                 comparison_payload
             ),
-            searchPerformed=search_payload is not None,
+            searchPerformed=_search_performed_from_tool_payload(search_payload),
             mode="adk",
         )
 

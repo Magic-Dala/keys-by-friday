@@ -43,6 +43,7 @@ import type {
   CommuteEvaluation,
   Listing,
   RecentSearch,
+  SearchRequirements,
 } from "@/types/search";
 
 const examplePrompts = [
@@ -50,6 +51,42 @@ const examplePrompts = [
   "Quiet cat-friendly apartment near Caltrain",
   "Modern 1 bed in Sunnyvale, flexible on move-in",
 ];
+
+const guidedRequirementSteps: Record<string, { question: string; options: { label: string; message: string }[] }> = {
+  commute_destination: {
+    question: "Where do you commute to?",
+    options: [
+      { label: "Google Mountain View", message: "My commute destination is Google Mountain View." },
+      { label: "Apple Park", message: "My commute destination is Apple Park." },
+      { label: "Meta Menlo Park", message: "My commute destination is Meta Menlo Park." },
+    ],
+  },
+  commute_travel_mode: {
+    question: "How do you usually commute?",
+    options: [
+      { label: "Drive", message: "My commute travel mode is DRIVE." },
+      { label: "Transit", message: "My commute travel mode is TRANSIT." },
+      { label: "Bike", message: "My commute travel mode is BICYCLE." },
+      { label: "Walk", message: "My commute travel mode is WALK." },
+    ],
+  },
+};
+
+function requirementLabels(requirements?: SearchRequirements) {
+  if (!requirements) return [];
+  const labels: string[] = [];
+  if (requirements.city) labels.push(`${requirements.city}${requirements.state ? `, ${requirements.state}` : ""}`);
+  if (requirements.maxRent !== undefined) labels.push(`≤ $${requirements.maxRent.toLocaleString()}/mo`);
+  if (requirements.minBedrooms !== undefined) labels.push(`${requirements.minBedrooms}+ bed`);
+  if (requirements.minBathrooms !== undefined) labels.push(`${requirements.minBathrooms}+ bath`);
+  if (requirements.petsRequired) labels.push("Pet-friendly");
+  if (requirements.parkingRequired) labels.push("Parking required");
+  if (requirements.maxCommuteMinutes !== undefined) labels.push(`≤ ${requirements.maxCommuteMinutes} min commute`);
+  if (requirements.commuteDestination) labels.push(`to ${requirements.commuteDestination}`);
+  if (requirements.commuteTravelMode) labels.push(requirements.commuteTravelMode.toLowerCase());
+  labels.push(...requirements.softPreferences);
+  return labels;
+}
 
 interface Turn {
   id: string;
@@ -94,6 +131,8 @@ export function RentalSearch() {
   const [conversationId, setConversationId] = useState<string>();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [listings, setListings] = useState<Listing[]>([]);
+  const [requirements, setRequirements] = useState<SearchRequirements>();
+  const [missingRequirements, setMissingRequirements] = useState<string[]>([]);
   const [commuteEvaluation, setCommuteEvaluation] = useState<CommuteEvaluation>();
   const [mobileResultsView, setMobileResultsView] = useState<"list" | "map">("list");
   const [highlightedListingId, setHighlightedListingId] = useState<string>();
@@ -152,6 +191,8 @@ export function RentalSearch() {
     setConversationId(undefined);
     setTurns([]);
     setListings([]);
+    setRequirements(undefined);
+    setMissingRequirements([]);
     setCommuteEvaluation(undefined);
     setMobileResultsView("list");
     setHighlightedListingId(undefined);
@@ -238,9 +279,8 @@ export function RentalSearch() {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [authDialogOpen]);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const message = draft.trim();
+  async function submitMessage(rawMessage: string) {
+    const message = rawMessage.trim();
     if (!message || loading) return;
 
     const identityGeneration = identityGenerationRef.current;
@@ -266,6 +306,8 @@ export function RentalSearch() {
       setConversationId(response.conversationId);
       setMode(response.mode);
       setListings(response.listings);
+      setRequirements(response.requirements);
+      setMissingRequirements(response.missingRequirements ?? []);
       setCommuteEvaluation(response.commuteEvaluation);
       routeSelection.reset();
       setMobileResultsView("list");
@@ -291,6 +333,11 @@ export function RentalSearch() {
       requestRef.current = null;
       setLoading(false);
     }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitMessage(draft);
   }
 
   function applyPrompt(prompt: string) {
@@ -390,6 +437,8 @@ export function RentalSearch() {
     setConversationId(undefined);
     setTurns([]);
     setListings([]);
+    setRequirements(undefined);
+    setMissingRequirements([]);
     setCommuteEvaluation(undefined);
     routeSelection.reset();
     setMobileResultsView("list");
@@ -417,6 +466,8 @@ export function RentalSearch() {
     setConversationId(search.conversationId);
     setTurns([]);
     setListings(search.listings);
+    setRequirements(undefined);
+    setMissingRequirements([]);
     setCommuteEvaluation(undefined);
     setMobileResultsView("list");
     setHighlightedListingId(undefined);
@@ -552,6 +603,10 @@ export function RentalSearch() {
     return listing ? [listing] : [];
   });
   const hasActiveSearch = Boolean(conversationId) || turns.length > 0 || listings.length > 0;
+  const guidedRequirement = missingRequirements
+    .map((name) => guidedRequirementSteps[name])
+    .find((step) => step !== undefined);
+  const activeRequirementLabels = requirementLabels(requirements);
   const journeyStage =
     listings.length === 0 ? 0 : turns.length === 0 ? 1 : compareIds.length < 2 ? 1 : showComparison ? 3 : 2;
 
@@ -793,6 +848,36 @@ export function RentalSearch() {
                   </article>
                 ) : null}
               </div>
+
+              {!loading && (activeRequirementLabels.length > 0 || guidedRequirement) ? (
+                <section className="agentRequirements" aria-label="Current rental requirements">
+                  {activeRequirementLabels.length > 0 ? (
+                    <div className="requirementSnapshot">
+                      <span>Agent remembers</span>
+                      <div className="requirementChips">
+                        {activeRequirementLabels.map((label) => <span key={label}>{label}</span>)}
+                      </div>
+                    </div>
+                  ) : null}
+                  {guidedRequirement ? (
+                    <div className="guidedRequirement">
+                      <strong>{guidedRequirement.question}</strong>
+                      <div className="guidedRequirementOptions">
+                        {guidedRequirement.options.map((option) => (
+                          <button
+                            type="button"
+                            key={option.label}
+                            onClick={() => void submitMessage(option.message)}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      <span>Or type another answer below.</span>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
 
               {!loading && listings.length ? (
                 <section className="resultsSection" aria-labelledby="results-title">

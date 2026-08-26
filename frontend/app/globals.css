@@ -718,6 +718,56 @@ p {
   padding: 30px 0 38px;
 }
 
+.agentRequirements {
+  display: grid;
+  gap: 14px;
+  margin: -12px 0 34px;
+  padding: 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  background: var(--color-surface);
+}
+
+.requirementSnapshot,
+.guidedRequirement {
+  display: grid;
+  gap: 9px;
+}
+
+.requirementSnapshot > span,
+.guidedRequirement > span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.requirementChips,
+.guidedRequirementOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.requirementChips > span,
+.guidedRequirementOptions button {
+  padding: 7px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-brand-soft);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.guidedRequirementOptions button {
+  cursor: pointer;
+}
+
+.guidedRequirementOptions button:hover {
+  border-color: rgba(193, 63, 53, 0.45);
+  color: var(--color-brand-hover);
+}
+
 .turn {
   display: grid;
   gap: 7px;

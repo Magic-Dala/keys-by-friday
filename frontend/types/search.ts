@@ -173,10 +173,28 @@ export interface SearchRequest {
 
 export type AgentMode = "adk" | "stub";
 
+export interface SearchRequirements {
+  city?: string;
+  state?: string;
+  maxRent?: number;
+  minBedrooms?: number;
+  maxBedrooms?: number;
+  minBathrooms?: number;
+  maxBathrooms?: number;
+  petsRequired?: boolean;
+  parkingRequired?: boolean;
+  commuteDestination?: string;
+  maxCommuteMinutes?: number;
+  commuteTravelMode?: string;
+  softPreferences: string[];
+}
+
 export interface SearchResponse {
   conversationId: string;
   message: string;
   listings: Listing[];
+  requirements?: SearchRequirements;
+  missingRequirements?: string[];
   commuteEvaluation?: CommuteEvaluation;
   route?: RouteDetail;
   comparison?: CanonicalComparison;

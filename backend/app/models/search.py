@@ -209,10 +209,28 @@ class SearchRequest(BaseModel):
         return normalized or None
 
 
+class SearchRequirementsResponse(BaseModel):
+    city: str | None = None
+    state: str | None = None
+    maxRent: float | None = None
+    minBedrooms: float | None = None
+    maxBedrooms: float | None = None
+    minBathrooms: float | None = None
+    maxBathrooms: float | None = None
+    petsRequired: bool | None = None
+    parkingRequired: bool | None = None
+    commuteDestination: str | None = None
+    maxCommuteMinutes: float | None = None
+    commuteTravelMode: str | None = None
+    softPreferences: list[str] = Field(default_factory=list)
+
+
 class SearchResponse(BaseModel):
     conversationId: str
     message: str
     listings: list[ListingResponse] = Field(default_factory=list)
+    requirements: SearchRequirementsResponse | None = None
+    missingRequirements: list[str] = Field(default_factory=list)
     commuteEvaluation: CommuteEvaluationResponse | None = None
     route: RouteDetailResponse | None = None
     comparison: CanonicalComparisonResponse | None = None

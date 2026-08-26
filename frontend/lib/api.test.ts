@@ -8,7 +8,7 @@ vi.mock("@/lib/firebase-auth", () => ({
   getFirebaseIdToken: getFirebaseIdTokenMock,
 }));
 
-import { getRecentSearches } from "@/lib/api";
+import { getRecentSearches, sendChat } from "@/lib/api";
 
 function response(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -24,6 +24,42 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it("parses Agent requirement state for guided follow-up", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    response({
+      conversationId: "conversation-1",
+      message: "I need two commute details before I search.",
+      listings: [],
+      requirements: {
+        city: "Mountain View",
+        state: "CA",
+        maxRent: 4000,
+        minBedrooms: 2,
+        maxCommuteMinutes: 30,
+        softPreferences: ["quiet"],
+      },
+      missingRequirements: ["commute_destination", "commute_travel_mode"],
+      searchPerformed: true,
+      mode: "adk",
+    }),
+  );
+
+  const result = await sendChat({ message: "Find a quiet 2 bed under $4,000." });
+
+  expect(result.requirements).toMatchObject({
+    city: "Mountain View",
+    state: "CA",
+    maxRent: 4000,
+    minBedrooms: 2,
+    maxCommuteMinutes: 30,
+    softPreferences: ["quiet"],
+  });
+  expect(result.missingRequirements).toEqual([
+    "commute_destination",
+    "commute_travel_mode",
+  ]);
 });
 
 it("fetches authenticated recent searches in backend order and retains supported price evidence", async () => {

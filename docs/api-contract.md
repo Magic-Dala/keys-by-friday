@@ -44,6 +44,10 @@ Response:
 }
 ```
 
+`searchPerformed` is `true` only when the current turn actually queried the
+listing provider. Requirement-collection turns and cache-only turns return
+`false`.
+
 Each listing may add a `canonicalListing` object using
 `kbf.canonical-listing.v1`. Explicit JSON `null` values represent unknown facts
 and must not be converted to `false` or guessed values.

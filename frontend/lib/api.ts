@@ -12,6 +12,7 @@ import type {
   RecentSearchResponse,
   SelectedRouteRequest,
   SearchRequest,
+  SearchRequirements,
   SearchResponse,
   ShortlistItem,
   ShortlistResponse,
@@ -48,6 +49,12 @@ function optionalNumber(value: unknown, field: string): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new ApiError(`Invalid ${field} in API response.`);
   }
+  return value;
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") throw new ApiError(`Invalid ${field} in API response.`);
   return value;
 }
 
@@ -342,6 +349,28 @@ function parseRecentSearchResponse(value: unknown): RecentSearchResponse {
   return { items: value.items.map(parseRecentSearch) };
 }
 
+function parseSearchRequirements(value: unknown): SearchRequirements {
+  if (!isRecord(value)) throw new ApiError("Invalid search requirements in API response.");
+  if (!Array.isArray(value.softPreferences) || value.softPreferences.some((item) => typeof item !== "string")) {
+    throw new ApiError("Invalid soft preferences in API response.");
+  }
+  return {
+    city: optionalString(value.city, "search city"),
+    state: optionalString(value.state, "search state"),
+    maxRent: optionalNumber(value.maxRent, "maximum rent"),
+    minBedrooms: optionalNumber(value.minBedrooms, "minimum bedrooms"),
+    maxBedrooms: optionalNumber(value.maxBedrooms, "maximum bedrooms"),
+    minBathrooms: optionalNumber(value.minBathrooms, "minimum bathrooms"),
+    maxBathrooms: optionalNumber(value.maxBathrooms, "maximum bathrooms"),
+    petsRequired: optionalBoolean(value.petsRequired, "pets requirement"),
+    parkingRequired: optionalBoolean(value.parkingRequired, "parking requirement"),
+    commuteDestination: optionalString(value.commuteDestination, "commute destination"),
+    maxCommuteMinutes: optionalNumber(value.maxCommuteMinutes, "maximum commute minutes"),
+    commuteTravelMode: optionalString(value.commuteTravelMode, "commute travel mode"),
+    softPreferences: value.softPreferences,
+  };
+}
+
 function parseSearchResponse(value: unknown): SearchResponse {
   if (!isRecord(value)) throw new ApiError("Invalid API response.");
   if (typeof value.conversationId !== "string" || typeof value.message !== "string") {
@@ -353,11 +382,20 @@ function parseSearchResponse(value: unknown): SearchResponse {
   if (!Array.isArray(value.listings)) {
     throw new ApiError("Invalid listings in API response.");
   }
+  const missingRequirements = value.missingRequirements ?? [];
+  if (!Array.isArray(missingRequirements) || missingRequirements.some((item) => typeof item !== "string")) {
+    throw new ApiError("Invalid missing requirements in API response.");
+  }
 
   return {
     conversationId: value.conversationId,
     message: value.message,
     listings: value.listings.map(parseListing),
+    requirements:
+      value.requirements === undefined || value.requirements === null
+        ? undefined
+        : parseSearchRequirements(value.requirements),
+    missingRequirements,
     commuteEvaluation:
       value.commuteEvaluation === undefined || value.commuteEvaluation === null
         ? undefined

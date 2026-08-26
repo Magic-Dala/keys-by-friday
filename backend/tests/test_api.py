@@ -13,10 +13,13 @@ from backend.app.services.agent_service import (
     _comparison_from_tool_payload,
     _commute_evaluation_from_tool_payload,
     _canonical_comparison_from_tool_payload,
+    _missing_requirements_from_tool_payload,
     _normalize_comparison_listings,
     _normalize_response_listings,
     _normalize_tool_listings,
+    _requirements_from_tool_payload,
     _route_from_tool_payload,
+    _search_performed_from_tool_payload,
     get_agent_service,
 )
 
@@ -285,6 +288,57 @@ def test_comparison_returns_selected_verified_canonical_listings() -> None:
     assert listings[0].bathrooms is None
     assert listings[0].canonicalListing is not None
     assert listings[0].canonicalListing.policies["petsAllowed"] is True
+
+
+def test_normalize_agent_requirement_state_for_frontend() -> None:
+    payload = {
+        "effective_requirements": {
+            "city": "Mountain View",
+            "state": "CA",
+            "max_rent": 4000,
+            "min_bedrooms": 2,
+            "pets_required": True,
+            "parking_required": True,
+            "commute_destination": None,
+            "max_commute_minutes": 30,
+            "commute_travel_mode": None,
+            "soft_preferences": ["quiet", "modern"],
+        },
+        "missing_requirements": ["commute_destination", "commute_travel_mode"],
+    }
+
+    requirements = _requirements_from_tool_payload(payload)
+
+    assert requirements is not None
+    assert requirements.city == "Mountain View"
+    assert requirements.state == "CA"
+    assert requirements.maxRent == 4000
+    assert requirements.minBedrooms == 2
+    assert requirements.petsRequired is True
+    assert requirements.parkingRequired is True
+    assert requirements.maxCommuteMinutes == 30
+    assert requirements.softPreferences == ["quiet", "modern"]
+    assert _missing_requirements_from_tool_payload(payload) == [
+        "commute_destination",
+        "commute_travel_mode",
+    ]
+
+
+def test_search_performed_requires_an_actual_provider_search() -> None:
+    assert _search_performed_from_tool_payload(None) is False
+    assert _search_performed_from_tool_payload({"status": "requires_input"}) is False
+    assert (
+        _search_performed_from_tool_payload(
+            {"provider_search_performed": False, "provider": "not_called"}
+        )
+        is False
+    )
+    assert (
+        _search_performed_from_tool_payload(
+            {"provider_search_performed": True, "provider": "mock"}
+        )
+        is True
+    )
 
 
 def test_normalize_commute_and_selected_route_contract() -> None:

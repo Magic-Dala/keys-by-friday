@@ -129,6 +129,67 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "");
 });
 
+it("shows remembered requirements and sends a guided choice in the same conversation", async () => {
+  vi.mocked(sendChat)
+    .mockResolvedValueOnce({
+      ...searchResponse,
+      message: "I need your commute destination before I search.",
+      listings: [],
+      requirements: {
+        city: "Mountain View",
+        state: "CA",
+        maxRent: 4000,
+        minBedrooms: 2,
+        maxCommuteMinutes: 30,
+        softPreferences: ["quiet"],
+      },
+      missingRequirements: ["commute_destination", "commute_travel_mode"],
+    })
+    .mockResolvedValueOnce({
+      ...searchResponse,
+      message: "Got it. How do you usually commute?",
+      listings: [],
+      requirements: {
+        city: "Mountain View",
+        state: "CA",
+        maxRent: 4000,
+        minBedrooms: 2,
+        maxCommuteMinutes: 30,
+        commuteDestination: "Google Mountain View",
+        softPreferences: ["quiet"],
+      },
+      missingRequirements: ["commute_travel_mode"],
+    });
+
+  render(<RentalSearch />);
+  const user = userEvent.setup();
+  await user.type(
+    screen.getByLabelText("Describe your ideal rental"),
+    "Quiet 2 bed under $4,000 in Mountain View, commute under 30 minutes",
+  );
+  await user.click(screen.getByRole("button", { name: "Ask rental agent" }));
+
+  expect(await screen.findByText("Agent remembers")).toBeVisible();
+  expect(screen.getByText("Mountain View, CA")).toBeVisible();
+  expect(screen.getByText("≤ $4,000/mo")).toBeVisible();
+  expect(screen.getByText("Where do you commute to?")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Google Mountain View" }));
+
+  await waitFor(() => {
+    expect(sendChat).toHaveBeenNthCalledWith(
+      2,
+      {
+        message: "My commute destination is Google Mountain View.",
+        conversationId: "conversation-1",
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+  expect(await screen.findByText("How do you usually commute?")).toBeVisible();
+  expect(screen.getByText("to Google Mountain View")).toBeVisible();
+});
+
 function recentSearch(overrides: Partial<RecentSearch> = {}): RecentSearch {
   return {
     conversationId: "historical-conversation",
@@ -155,6 +216,13 @@ function recentSearch(overrides: Partial<RecentSearch> = {}): RecentSearch {
     lastCommuteStatus: "available",
     ...overrides,
   };
+}
+
+function displayedRecentSearchDate(timestamp = "2026-08-20T18:15:00Z") {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(timestamp));
 }
 
 it("does not show another account's Recent Searches to an anonymous user", () => {
@@ -187,7 +255,9 @@ it("shows authenticated Recent Searches in the order returned by the backend", a
   await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(1));
   expect(getRecentSearches).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   const panelText = panel.textContent ?? "";
-  expect(panelText.indexOf("Updated Aug 20")).toBeLessThan(panelText.indexOf("Updated Aug 19"));
+  expect(panelText.indexOf(`Updated ${displayedRecentSearchDate("2026-08-20T18:15:00Z")}`)).toBeLessThan(
+    panelText.indexOf(`Updated ${displayedRecentSearchDate("2026-08-19T18:15:00Z")}`),
+  );
   expect(within(panel).getAllByRole("heading", { name: "Rental search" })).toHaveLength(2);
 });
 
@@ -203,14 +273,15 @@ it("clears the previous account's Recent Searches when Firebase UID changes", as
     .mockImplementationOnce(() => new Promise(() => undefined));
 
   render(<RentalSearch />);
-  expect(await screen.findByText("Updated Aug 20 · 4 turns")).toBeVisible();
+  const updatedLabel = `Updated ${displayedRecentSearchDate()} · 4 turns`;
+  expect(await screen.findByText(updatedLabel)).toBeVisible();
 
   await act(async () => {
     notifyAuthChange?.({ uid: "email-2", isAnonymous: false, displayName: "Grace", email: "grace@example.com" });
   });
 
   await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(2));
-  expect(screen.queryByText("Updated Aug 20 · 4 turns")).not.toBeInTheDocument();
+  expect(screen.queryByText(updatedLabel)).not.toBeInTheDocument();
 });
 
 it("restores saved listings without fabricating transcript turns and continues with its conversation ID", async () => {
@@ -229,7 +300,9 @@ it("restores saved listings without fabricating transcript turns and continues w
 
   expect(await screen.findByText("The strongest matches")).toBeVisible();
   expect(screen.getByRole("heading", { name: "Saved Heatherstone" })).toBeVisible();
-  expect(screen.getByText("Showing the latest saved results from Aug 20.")).toBeVisible();
+  expect(
+    screen.getByText(`Showing the latest saved results from ${displayedRecentSearchDate()}.`),
+  ).toBeVisible();
   expect(screen.getByText("Verify").closest("li")).toHaveClass("isCurrent");
   expect(screen.queryByText("I found one strong match.")).not.toBeInTheDocument();
 
@@ -257,7 +330,7 @@ it("focuses the composer and indicates continuation from Continue Search", async
   await user.click(within(panel).getByRole("button", { name: "Continue Search" }));
 
   await waitFor(() => expect(screen.getByLabelText("Refine your request")).toHaveFocus());
-  expect(screen.getByText("Continuing your search from Aug 20.")).toBeVisible();
+  expect(screen.getByText(`Continuing your search from ${displayedRecentSearchDate()}.`)).toBeVisible();
 });
 
 it("does not turn a successful chat result into an error when history refresh fails", async () => {
