@@ -503,6 +503,33 @@ def test_realtor_full_state_name_normalizes_for_hard_filters():
     assert passes_hard_filters(result, requirements) is True
 
 
+
+def test_realtor_non_california_full_state_name_normalizes_for_hard_filters():
+    row = _realtor_row("texas-state", address="100 Congress Ave")
+    address = row["location"]["address"]
+    address["city"] = "Austin"
+    address.pop("state_code")
+    address["state"] = "Texas"
+    address["postal_code"] = "78701"
+
+    def apartments_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": []})
+
+    def zillow_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, json={"error": "not available"})
+
+    def realtor_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"searchResults": [row]})
+
+    provider = _provider(apartments_handler, zillow_handler, realtor_handler)
+    requirements = SearchRequirements(city="Austin", state="TX", max_rent=4000, limit=5)
+
+    result = provider.search(requirements)[0]
+
+    assert result.state == "TX"
+    assert passes_hard_filters(result, requirements) is True
+
+
 def test_zillow_retries_bounded_credit_race_until_success(monkeypatch):
     zillow_calls = 0
     sleeps: list[float] = []

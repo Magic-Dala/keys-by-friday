@@ -56,6 +56,41 @@ def test_mock_tool_path_works_without_external_keys(monkeypatch):
     assert result["soft_preferences_unverified"] == ["quiet", "near transit"]
 
 
+
+def test_search_accepts_non_california_city_and_normalizes_state_name(monkeypatch):
+    seen = []
+
+    class AustinProvider:
+        def search(self, requirements):
+            seen.append(requirements)
+            return [
+                Listing(
+                    id="austin-1",
+                    address="100 Congress Ave, Austin, TX 78701",
+                    city="Austin",
+                    state="TX",
+                    zip_code="78701",
+                    rent=2400,
+                    bedrooms=2,
+                    bathrooms=2,
+                    status="active",
+                    source="test-source",
+                )
+            ]
+
+        def health(self):
+            return {"ok": True, "provider": "austin-test"}
+
+    monkeypatch.setattr(agent_module, "get_provider", lambda: AustinProvider())
+
+    result = search_listings(city="Austin", state="Texas", max_rent=2500, min_bedrooms=2)
+
+    assert seen[0].city == "Austin"
+    assert seen[0].state == "TX"
+    assert result["effective_requirements"]["state"] == "TX"
+    assert result["matched_count"] == 1
+
+
 def test_search_returns_all_properties_and_keeps_top_aliases(monkeypatch):
     class TwelveListingProvider:
         def search(self, requirements):

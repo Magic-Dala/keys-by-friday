@@ -46,9 +46,9 @@ import type {
 } from "@/types/search";
 
 const examplePrompts = [
-  "2 bed under $4,000 in Mountain View with parking",
-  "Quiet cat-friendly apartment near Caltrain",
-  "Modern 1 bed in Sunnyvale, flexible on move-in",
+  "2 bed under $2,500 in Austin, TX with parking",
+  "Quiet cat-friendly apartment in Seattle, WA near transit",
+  "Modern 1 bed in Chicago, IL, flexible on move-in",
 ];
 
 interface Turn {
@@ -715,7 +715,7 @@ export function RentalSearch() {
         <main className="mainPanel" id="main-content">
           {!hasActiveSearch ? (
             <section className="welcome" aria-labelledby="page-title">
-              <span className="heroEyebrow">Bay Area rentals · Agentic search</span>
+              <span className="heroEyebrow">U.S. rentals · Agentic search</span>
               <h1 id="page-title">A better rental,<br />without the tab chaos.</h1>
               <p>
                 Tell us what matters once. Your agent searches, checks hard constraints,

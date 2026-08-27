@@ -55,7 +55,7 @@ export function SearchComposer({
           }}
           rows={2}
           maxLength={4000}
-          placeholder={hasConversation ? "Refine your search…" : "2 bed under $4,000 in Mountain View with parking"}
+          placeholder={hasConversation ? "Refine your search…" : "2 bed under $2,500 in Austin, TX with parking"}
           disabled={loading}
         />
         <div className="composerFooter">
