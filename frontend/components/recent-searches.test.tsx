@@ -5,6 +5,13 @@ import { expect, it, vi } from "vitest";
 import { RecentSearches } from "@/components/recent-searches";
 import type { RecentSearch } from "@/types/search";
 
+function displayedDate(timestamp: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(timestamp));
+}
+
 function search(overrides: Partial<RecentSearch> = {}): RecentSearch {
   return {
     conversationId: "conversation-1",
@@ -47,10 +54,13 @@ it("renders backend-ordered searches with truthful metadata and only three visib
   });
 
   const listText = screen.getByRole("list").textContent ?? "";
-  expect(listText.indexOf("Updated Aug 20")).toBeLessThan(listText.indexOf("Updated Aug 19"));
-  expect(listText.indexOf("Updated Aug 19")).toBeLessThan(listText.indexOf("Updated Aug 18"));
+  const newestDate = displayedDate("2026-08-20T18:15:00Z");
+  const middleDate = displayedDate("2026-08-19T18:15:00Z");
+  const oldestDate = displayedDate("2026-08-18T18:15:00Z");
+  expect(listText.indexOf(`Updated ${newestDate}`)).toBeLessThan(listText.indexOf(`Updated ${middleDate}`));
+  expect(listText.indexOf(`Updated ${middleDate}`)).toBeLessThan(listText.indexOf(`Updated ${oldestDate}`));
   expect(screen.getAllByRole("heading", { name: "Rental search" })).toHaveLength(3);
-  expect(screen.getByText("Updated Aug 20 · 4 turns")).toBeVisible();
+  expect(screen.getByText(`Updated ${newestDate} · 4 turns`)).toBeVisible();
   expect(screen.getAllByText("1 latest home")).toHaveLength(3);
   expect(screen.getAllByText("$3,450 – $3,950")).toHaveLength(3);
   expect(screen.getAllByText("Commute data available")).toHaveLength(3);

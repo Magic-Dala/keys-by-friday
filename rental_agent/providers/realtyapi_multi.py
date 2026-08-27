@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable, TypeVar
 import httpx
 
 from rental_agent.models import Listing, SearchRequirements
+from rental_agent.us_states import normalize_us_state
 from rental_agent.coordinates import normalize_latitude, normalize_longitude
 from rental_agent.providers.base import ListingProvider
 from rental_agent.providers.realtyapi import (
@@ -176,10 +177,9 @@ def _address_parts(
         city = city or requirements.city
         state = state or requirements.state
 
-    if state and state.casefold().strip() == "california":
-        state = "CA"
+    state = normalize_us_state(state)
 
-    return address, city or "", state or "", zip_code
+    return address, city or "", state, zip_code
 
 
 def _range(minimum: float | None, maximum: float | None) -> str | None:

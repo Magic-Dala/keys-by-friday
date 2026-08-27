@@ -1,7 +1,7 @@
 [project]
 name = "keys-by-friday"
 version = "0.1.0"
-description = "Single-agent Silicon Valley rental search MVP"
+description = "Single-agent U.S. rental search MVP"
 requires-python = ">=3.11"
 dependencies = [
   "google-adk[db]>=2.1.0,<3.0.0",

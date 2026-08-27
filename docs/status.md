@@ -165,7 +165,7 @@ Exact commit hashes and branch names are intentionally not recorded here; Git is
 
 ## Known MVP Boundaries
 
-- Geography is currently focused on configured Silicon Valley cities.
+- Rental search geography supports U.S. cities through the configured listing providers; provider coverage and listing completeness still vary by market.
 - Some provider fields are unavailable for some listings and must remain unknown.
 - Supported soft preferences rely on explicit listing evidence; safety remains unsupported unless a trustworthy evidence source is added.
 - Commute is computed only when destination, limit, travel mode, coordinates, and route evidence are available; otherwise it remains explicitly unknown or unavailable and must not be guessed by Gemini.
