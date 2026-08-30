@@ -153,4 +153,4 @@ GitHub Actions runs these baseline checks on pushes and pull requests.
 
 Normal feature work should update code and tests, not rewrite Stable Reference documents.
 
-Use `status.md` for current progress and `roadmap.md` for changing priorities. Update this file only when the actual setup, ownership model, or collaboration workflow intentionally changes.
+Keep this document focused on setup, stable architecture, and collaboration workflow. Track changing priorities and implementation progress in the team's private project workspace.

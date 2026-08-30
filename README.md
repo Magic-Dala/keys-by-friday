@@ -222,14 +222,12 @@ GitHub Actions runs the Python and Frontend checks on pushes and pull requests.
 | `docs/api-contract.md` | Stable Frontend ↔ Backend contract |
 | `docs/development.md` | Manual service commands and contributor workflow |
 | `docs/deployment.md` | macOS, Docker, and Cloud Run backend deployment |
-| `docs/authentication.md` | Firebase identity setup and Milestone 2 tests |
+| `docs/authentication.md` | Firebase identity setup and verification |
 | `docs/maps.md` | Google Routes / commute setup and testing |
-| `docs/firestore.md` | Firestore repositories, shortlist persistence, and Milestone 3 tests |
-| `docs/adk-sessions.md` | Persistent ADK sessions, restart test, concurrency, and Milestone 4 setup |
-| `docs/comparison-shortlist.md` | Canonical listings, comparison, shortlist CRUD, and Milestone 5 tests |
+| `docs/firestore.md` | Firestore repositories, shortlist persistence, and verification |
+| `docs/adk-sessions.md` | Persistent ADK sessions, restart behavior, concurrency, and configuration |
+| `docs/comparison-shortlist.md` | Canonical listings, comparison, shortlist CRUD, and verification |
 | `docs/rate-limits.md` | Anonymous Firebase rate limiting, Firestore counters, and cost boundaries |
 | `docs/agent.md` | Stable Agent authority and behavior rules |
-| `docs/status.md` | **Living:** current implementation status |
-| `docs/roadmap.md` | **Living:** priorities and next work |
 
-Stable documents change only when the actual setup, architecture, API contract, ownership, or Agent authority changes. Normal progress belongs in `docs/status.md` and `docs/roadmap.md`.
+Stable documents change only when the actual setup, architecture, API contract, ownership, or Agent authority changes.
