@@ -129,6 +129,13 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_MAPS_API_KEY", "");
 });
 
+function displayedRecentSearchDate(timestamp: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(timestamp));
+}
+
 function recentSearch(overrides: Partial<RecentSearch> = {}): RecentSearch {
   return {
     conversationId: "historical-conversation",
@@ -187,7 +194,9 @@ it("shows authenticated Recent Searches in the order returned by the backend", a
   await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(1));
   expect(getRecentSearches).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
   const panelText = panel.textContent ?? "";
-  expect(panelText.indexOf("Updated Aug 20")).toBeLessThan(panelText.indexOf("Updated Aug 19"));
+  expect(panelText.indexOf(`Updated ${displayedRecentSearchDate("2026-08-20T18:15:00Z")}`)).toBeLessThan(
+    panelText.indexOf(`Updated ${displayedRecentSearchDate("2026-08-19T18:15:00Z")}`),
+  );
   expect(within(panel).getAllByRole("heading", { name: "Rental search" })).toHaveLength(2);
 });
 
@@ -203,14 +212,14 @@ it("clears the previous account's Recent Searches when Firebase UID changes", as
     .mockImplementationOnce(() => new Promise(() => undefined));
 
   render(<RentalSearch />);
-  expect(await screen.findByText("Updated Aug 20 · 4 turns")).toBeVisible();
+  expect(await screen.findByText(`Updated ${displayedRecentSearchDate("2026-08-20T18:15:00Z")} · 4 turns`)).toBeVisible();
 
   await act(async () => {
     notifyAuthChange?.({ uid: "email-2", isAnonymous: false, displayName: "Grace", email: "grace@example.com" });
   });
 
   await waitFor(() => expect(getRecentSearches).toHaveBeenCalledTimes(2));
-  expect(screen.queryByText("Updated Aug 20 · 4 turns")).not.toBeInTheDocument();
+  expect(screen.queryByText(`Updated ${displayedRecentSearchDate("2026-08-20T18:15:00Z")} · 4 turns`)).not.toBeInTheDocument();
 });
 
 it("restores saved listings without fabricating transcript turns and continues with its conversation ID", async () => {
@@ -229,7 +238,7 @@ it("restores saved listings without fabricating transcript turns and continues w
 
   expect(await screen.findByText("The strongest matches")).toBeVisible();
   expect(screen.getByRole("heading", { name: "Saved Heatherstone" })).toBeVisible();
-  expect(screen.getByText("Showing the latest saved results from Aug 20.")).toBeVisible();
+  expect(screen.getByText(`Showing the latest saved results from ${displayedRecentSearchDate("2026-08-20T18:15:00Z")}.`)).toBeVisible();
   expect(screen.getByText("Verify").closest("li")).toHaveClass("isCurrent");
   expect(screen.queryByText("I found one strong match.")).not.toBeInTheDocument();
 
@@ -257,7 +266,7 @@ it("focuses the composer and indicates continuation from Continue Search", async
   await user.click(within(panel).getByRole("button", { name: "Continue Search" }));
 
   await waitFor(() => expect(screen.getByLabelText("Refine your request")).toHaveFocus());
-  expect(screen.getByText("Continuing your search from Aug 20.")).toBeVisible();
+  expect(screen.getByText(`Continuing your search from ${displayedRecentSearchDate("2026-08-20T18:15:00Z")}.`)).toBeVisible();
 });
 
 it("does not turn a successful chat result into an error when history refresh fails", async () => {

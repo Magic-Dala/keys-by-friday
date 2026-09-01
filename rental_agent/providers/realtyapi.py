@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from rental_agent.models import Listing, SearchRequirements
+from rental_agent.us_states import normalize_us_state
 from rental_agent.coordinates import normalize_latitude, normalize_longitude
 from rental_agent.providers.base import ListingProvider
 
@@ -104,7 +105,7 @@ def _address_parts(raw: dict[str, Any]) -> tuple[str, str, str, str | None]:
                 break
 
     city = str(raw.get("city") or address_obj.get("city") or "")
-    state = str(raw.get("state") or address_obj.get("state") or "")
+    state = normalize_us_state(str(raw.get("state") or address_obj.get("state") or ""))
     zip_value = (
         raw.get("zip")
         or raw.get("zipCode")

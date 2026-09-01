@@ -21,21 +21,12 @@ from rental_agent.llm import build_ordered_gemini
 from rental_agent.models import Listing, SearchRequirements
 from rental_agent.pipeline import filter_and_rank, passes_hard_filters
 from rental_agent.providers import get_provider
+from rental_agent.us_states import normalize_us_state
 
 load_dotenv()
 if os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "FALSE")
-
-SUPPORTED_CITIES = {
-    "san jose",
-    "santa clara",
-    "sunnyvale",
-    "mountain view",
-    "palo alto",
-    "menlo park",
-    "redwood city",
-}
 
 _REQUIREMENTS_STATE_KEY = "rental_search_requirements"
 _CANDIDATES_STATE_KEY = "rental_last_candidates"
@@ -111,7 +102,7 @@ def _requirements_from_dict(value: object) -> SearchRequirements | None:
         return None
     return SearchRequirements(
         city=str(value["city"]),
-        state=str(value.get("state") or "CA"),
+        state=normalize_us_state(str(value.get("state") or "CA")),
         max_rent=value.get("max_rent"),
         min_bedrooms=value.get("min_bedrooms"),
         max_bedrooms=value.get("max_bedrooms"),
@@ -167,12 +158,8 @@ def _merge_requirements(
     prior = None if reset_search else previous
     effective_city = city.strip() or (prior.city if prior else "")
     if not effective_city:
-        raise ValueError("A supported city is required for the first rental search.")
-    if effective_city.casefold() not in SUPPORTED_CITIES:
-        raise ValueError(
-            "MVP supports only San Jose, Santa Clara, Sunnyvale, Mountain View, "
-            "Palo Alto, Menlo Park, and Redwood City."
-        )
+        raise ValueError("A city is required for the first rental search.")
+    effective_state = normalize_us_state(state) or (prior.state if prior else "CA")
 
     def numeric(value: float | None, prior_value: float | None) -> float | None:
         explicit = _positive_number(value)
@@ -194,7 +181,7 @@ def _merge_requirements(
         commute_mode = prior.commute_travel_mode
     return SearchRequirements(
         city=effective_city,
-        state=(state.strip().upper() or (prior.state if prior else "CA")),
+        state=effective_state,
         max_rent=numeric(max_rent, prior.max_rent if prior else None),
         min_bedrooms=numeric(
             min_bedrooms, prior.min_bedrooms if prior else None
@@ -2117,13 +2104,15 @@ def compare_candidates(
 root_agent = Agent(
     name="single_rental_agent",
     model=build_ordered_gemini(),
-    description="Finds, verifies, compares, and explains Silicon Valley rentals.",
+    description="Finds, verifies, compares, and explains rentals across the United States.",
     instruction="""
 You are Keys by Friday's single rental search agent. There are no sub-agents.
 
 Memory and search behavior:
-1. Extract explicit hard constraints: supported city, state, budget, bedroom/
-   bathroom bounds, required pets, and required parking.
+1. Extract explicit hard constraints: city, state, budget, bedroom/bathroom
+   bounds, required pets, and required parking. Search coverage is nationwide across
+   the United States; do not reject a city because it is outside California. Pass the
+   state whenever it is known; full state names and postal abbreviations are accepted.
 2. Treat a plain numeric room count such as "2 bedroom", "2-bedroom", "2 bed",
    or "2 bathroom" as an exact count: pass the same value as both the minimum and
    maximum bound. Use a one-sided bound only when the user says "at least", "2+",
